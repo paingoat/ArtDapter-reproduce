@@ -45,8 +45,8 @@
 | Setting | Giá trị | Lý do |
 |---|---|---|
 | `training_steps` | 5,000 | Survey reproduction (ước tính ~2-3 giờ) |
-| `batch_size` | 4 | P100 16GB VRAM |
-| `accumulate_grad_batches` | 6 | Effective batch = 4 × 6 = 24 ≈ 22 gốc |
+| `batch_size` | 2 | P100 16GB VRAM (giảm xuống 2 để tránh OOM) |
+| `accumulate_grad_batches` | 12 | Effective batch = 2 × 12 = 24 ≈ 22 gốc |
 | `precision` | `16-mixed` | P100 **không** hỗ trợ bf16 |
 | `use_checkpoint` | True | Gradient checkpointing tiết kiệm VRAM |
 | `log_frequency` | 200 | Checkpoint thường xuyên |
@@ -492,7 +492,7 @@ Inference:
 ```
 
 ### Q: Lỗi "CUDA out of memory"?
-**A**: Giảm `batch_size` xuống 2 trong `train_config_kaggle.yaml`, tăng `accumulate_grad_batches` lên 12.
+**A**: Giảm `batch_size` xuống 1 trong `train_config_kaggle.yaml`, tăng `accumulate_grad_batches` lên 24.
 
 ### Q: Training bị ngắt giữa chừng?
 **A**: Checkpoint tự lưu mỗi 200 steps + exception checkpoint khi crash. Chạy lại từ Cell 0 → ... → Cell 7 (tìm checkpoint) → Cell 8.

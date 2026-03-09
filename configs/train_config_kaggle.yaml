@@ -5,9 +5,9 @@ training:
   strategy: auto
   training_steps: 5000  # survey reproduction (ước tính ~2-3 giờ trên P100)
   ckpt_dir: /kaggle/working/ckpt/trained
-  accumulate_grad_batches: 6  # effective batch = 4 * 6 = 24 (gần bằng batch 22 gốc)
+  accumulate_grad_batches: 12  # effective batch = 2 * 12 = 24 (gần bằng batch 22 gốc)
   dataloader:
-    batch_size: 4  # P100 16GB VRAM
+    batch_size: 2  # P100 16GB VRAM (giảm xuống 2 để tránh OOM)
     num_workers: 2  # Kaggle có ít CPU cores
     pin_memory: True
     shuffle: True
