@@ -14,8 +14,9 @@ from utils import freeze, set_warn_with_traceback, rank_zero_call
 def get_args():
 	parser = argparse.ArgumentParser(description='Art-dapter Training')
 	parser.add_argument('--config_filepath',		'-cfg',	type=str,	default='./configs/train_config.yaml')
-	parser.add_argument('--gpus',								'-g',		type=str,	default='0')
+	parser.add_argument('--gpus',							'-g',		type=str,	default='0')
 	parser.add_argument('--warning_traceback',	'-wt',	action='store_true')
+	parser.add_argument('--resume_from',				'-r',		type=str,	default=None, help='Path to checkpoint to resume training from')
 	return parser.parse_args()
 
 
@@ -43,6 +44,10 @@ def main():
 	wandb_logger = WandbLogger(project="ArtDapter")
 	wandb_logger.watch(model, log="all", log_freq=config.logger.params.log_frequency)
 	rank_zero_call(wandb_logger.experiment.config, 'update', OmegaConf.to_container(config, resolve=True))
+
+	# Gradient accumulation to compensate for smaller batch sizes
+	accumulate_grad_batches = config.training.get('accumulate_grad_batches', 1)
+
 	training = pl.Trainer(
 		accelerator =				'auto',
 		devices =						gpus,
@@ -51,6 +56,7 @@ def main():
 		precision =					config.training.precision,
 		logger =						wandb_logger,
 		log_every_n_steps =	config.logger.params.log_frequency,
+		accumulate_grad_batches = accumulate_grad_batches,
 		callbacks =					[
 			instantiate_from_config(config.logger),
 			ModelCheckpoint(
@@ -61,7 +67,7 @@ def main():
 			OnExceptionCheckpoint(config.training.ckpt_dir, f'{wandb_logger.experiment.name}_EXCEPTION')
 		]
 	)
-	training.fit(model, dataloader)
+	training.fit(model, dataloader, ckpt_path=args.resume_from)
 
 
 if __name__ == '__main__':
