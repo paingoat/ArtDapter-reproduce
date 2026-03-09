@@ -50,7 +50,7 @@
 | `precision` | `16-mixed` | P100 **không** hỗ trợ bf16 |
 | `use_checkpoint` | True | Gradient checkpointing tiết kiệm VRAM |
 | `log_frequency` | 200 | Checkpoint thường xuyên |
-| `dataset_path` | `/kaggle/input/compart` | Load trực tiếp từ Kaggle Input |
+| `dataset_path` | `/kaggle/input/datasets/thoandanh/compart` | Load trực tiếp từ Kaggle Input |
 
 ---
 
@@ -73,7 +73,7 @@
 
 1. Click **"+ Add Data"** ở thanh bên phải
 2. Tìm `thoandanh/compart` → **Add**
-3. Dataset sẽ ở `/kaggle/input/compart/`
+3. Dataset sẽ ở `/kaggle/input/datasets/thoandanh/compart/`
 
 ---
 
@@ -97,8 +97,8 @@ os.environ['TRANSFORMERS_CACHE'] = '/tmp/hf_cache/transformers'
 os.environ['HF_DATASETS_CACHE'] = '/tmp/hf_cache/datasets'
 
 # Kiểm tra dataset CompArt đã được add vào notebook chưa
-if os.path.exists('/kaggle/input/compart'):
-    print('✅ Dataset CompArt đã có tại /kaggle/input/compart/')
+if os.path.exists('/kaggle/input/datasets/thoandanh/compart'):
+    print('✅ Dataset CompArt đã có tại /kaggle/input/datasets/thoandanh/compart/')
 else:
     print('⚠️ Chưa add dataset "thoandanh/compart" vào notebook!')
     print('   → Click "+ Add Data" → tìm "thoandanh/compart" → Add')
@@ -106,7 +106,7 @@ else:
 print(f'\n📁 HF_HOME = {os.environ["HF_HOME"]}')
 ```
 
-**Mục đích**: Chuyển HuggingFace cache (T5-XL ~10GB) sang `/tmp/` để không tốn disk quota. Dataset CompArt load trực tiếp từ `/kaggle/input/compart/` qua config — không cần symlink.
+**Mục đích**: Chuyển HuggingFace cache (T5-XL ~10GB) sang `/tmp/` để không tốn disk quota. Dataset CompArt load trực tiếp từ `/kaggle/input/datasets/thoandanh/compart/` qua config — không cần symlink.
 
 ---
 
@@ -498,7 +498,7 @@ Inference:
 **A**: Checkpoint tự lưu mỗi 200 steps + exception checkpoint khi crash. Chạy lại từ Cell 0 → ... → Cell 7 (tìm checkpoint) → Cell 8.
 
 ### Q: Dataset CompArt không load được từ Kaggle Input?
-**A**: Kiểm tra đã Add Data chưa (`"+ Add Data" → tìm "thoandanh/compart" → Add`). Config `train_config_kaggle.yaml` đã trỏ `dataset_path` thẳng đến `/kaggle/input/compart` — không cần symlink.
+**A**: Kiểm tra đã Add Data chưa (`"+ Add Data" → tìm "thoandanh/compart" → Add`). Config `train_config_kaggle.yaml` đã trỏ `dataset_path` thẳng đến `/kaggle/input/datasets/thoandanh/compart` — không cần symlink.
 
 ### Q: Tốc độ training bao nhiêu?
 **A**: P100 ≈ 1.5-2.0 s/step. Với 5K steps (survey) ≈ **2-3 giờ**, dư sức trong 1 session 12h.
