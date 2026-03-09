@@ -3,7 +3,7 @@ training:
   weight_decay: 0.01
   precision: 16-mixed  # P100 chỉ hỗ trợ FP16, KHÔNG hỗ trợ bf16
   strategy: auto
-  training_steps: 280000
+  training_steps: 5000  # survey reproduction (ước tính ~2-3 giờ trên P100)
   ckpt_dir: /kaggle/working/ckpt/trained
   accumulate_grad_batches: 6  # effective batch = 4 * 6 = 24 (gần bằng batch 22 gốc)
   dataloader:
