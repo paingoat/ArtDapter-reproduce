@@ -29,7 +29,7 @@ logger:
 dataset:
   target: dataset.CompArt
   params:
-    dataset_path: thejinzhe/CompArt
+    dataset_path: /kaggle/input/compart
     split: train
     dtype: float32
     image_size: 512

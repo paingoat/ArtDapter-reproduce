@@ -1,15 +1,16 @@
 # 🎨 Hướng Dẫn Train & Inference ArtDapter trên Kaggle (GPU P100)
 
 > **GPU**: NVIDIA Tesla P100 — 16GB HBM2 VRAM  
-> **Repo**: `https://github.com/YOUR_USERNAME/ArtDapter.git` ← Thay bằng repo của bạn  
-> **Config**: `configs/train_config_kaggle.yaml`
+> **Repo**: `https://github.com/paingoat/ArtDapter-reproduce.git`  
+> **Config**: `configs/train_config_kaggle.yaml`  
+> **Dataset**: `https://www.kaggle.com/datasets/thoandanh/compart`
 
 ---
 
 ## 📋 Mục Lục
 
 1. [Tổng quan & Lưu ý quan trọng](#1-tổng-quan--lưu-ý-quan-trọng)
-2. [Tạo Kaggle Notebook](#2-tạo-kaggle-notebook)
+2. [Chuẩn bị trước khi bắt đầu](#2-chuẩn-bị-trước-khi-bắt-đầu)
 3. [Các cell cho Training](#3-các-cell-cho-training)
 4. [Các cell cho Inference](#4-các-cell-cho-inference)
 5. [Cheat Sheet: Session mới](#5-cheat-sheet-session-mới)
@@ -19,63 +20,58 @@
 
 ## 1. Tổng quan & Lưu ý quan trọng
 
-### Specs GPU P100 trên Kaggle
+### Bộ nhớ trên Kaggle
 
-| Thông số | Giá trị |
-|---|---|
-| GPU | NVIDIA Tesla P100 |
-| VRAM | 16GB HBM2 |
-| Memory Bandwidth | 732 GB/s |
-| Compute Capability | 6.0 |
-| FP16 | ✅ Hỗ trợ (18.7 TFLOPS) |
-| BF16 | ❌ **Không hỗ trợ** |
-| Precision dùng | `16-mixed` (FP16) |
+| Loại | Giới hạn | Đường dẫn | Ghi chú |
+|---|---|---|---|
+| **GPU VRAM** | 16 GB | — | Chứa model + tensors khi tính toán |
+| **RAM** | 29 GB | — | Chứa dataset, biến Python |
+| **Disk** (tổng) | ~58 GB | `/`, `~/.cache/` | Hệ thống + packages + cache |
+| **Output** | ~20 GB | `/kaggle/working/` | File output, checkpoint |
+| **Input** | **Không giới hạn** | `/kaggle/input/` | ⭐ Kaggle Dataset — **MIỄN PHÍ** |
+| `/tmp/` | Dùng chung Disk | `/tmp/` | **Không tính vào quota** |
 
-### Cấu hình training đã tối ưu
+> ⚠️ **Nguyên nhân tràn Disk phổ biến nhất**: HuggingFace tự tải T5-XL (~10GB) + CompArt dataset (~27GB) vào `~/.cache/huggingface/` → vượt 58GB disk.
+
+### Chiến lược tối ưu (đã áp dụng trong guide này)
+
+1. ✅ CompArt dataset → đã upload lên **Kaggle Dataset** (`/kaggle/input/`) → **0 byte disk**
+2. ✅ HuggingFace cache (T5-XL model) → chuyển sang `/tmp/` → **không tính quota**
+3. ✅ Pre-trained weights (SD v1.5, ELLA) → tải vào `/tmp/`, dùng xong xóa
+4. ✅ Checkpoint training → lưu ở `/kaggle/working/` (~4GB/file)
+
+### Cấu hình training
 
 | Setting | Giá trị | Lý do |
 |---|---|---|
 | `batch_size` | 4 | P100 16GB VRAM |
 | `accumulate_grad_batches` | 6 | Effective batch = 4 × 6 = 24 ≈ 22 gốc |
-| `precision` | `16-mixed` | P100 chỉ hỗ trợ FP16, **không** bf16 |
+| `precision` | `16-mixed` | P100 **không** hỗ trợ bf16 |
 | `use_checkpoint` | True | Gradient checkpointing tiết kiệm VRAM |
-| `log_frequency` | 200 | Checkpoint thường xuyên (phòng session ngắt) |
-| `num_workers` | 2 | Kaggle ít CPU cores |
-
-### Giới hạn Kaggle
-
-- **GPU quota**: 30 giờ/tuần (P100)
-- **Session tối đa**: ~12 giờ liên tục
-- **Output storage**: 20GB tại `/kaggle/working/` — **file ở đây được giữ lại** khi Save Version
-- **Kaggle Datasets**: Dùng để lưu checkpoint lâu dài giữa các notebooks
-
-> ⚠️ **QUAN TRỌNG**: Khác với Google Colab (dùng Google Drive), Kaggle lưu output tại `/kaggle/working/`. Để giữ checkpoint qua nhiều sessions, bạn cần **Save Version** hoặc upload checkpoint lên **Kaggle Dataset**.
+| `log_frequency` | 200 | Checkpoint thường xuyên |
 
 ---
 
-## 2. Tạo Kaggle Notebook
+## 2. Chuẩn bị trước khi bắt đầu
 
-### Bước 1: Tạo Notebook mới
+### Tạo Kaggle Notebook
 
-1. Vào [kaggle.com](https://www.kaggle.com) → đăng nhập
-2. Click **"+ Create"** → **"New Notebook"**
-3. Đổi tên notebook: `ArtDapter-Training-P100`
+1. Vào [kaggle.com](https://www.kaggle.com) → **"+ Create"** → **"New Notebook"**
+2. Đổi tên: `ArtDapter-Training-P100`
 
-### Bước 2: Bật GPU P100
+### Cài đặt Notebook (Settings ⚙️)
 
-1. Click **⚙️ Settings** (góc phải) hoặc **Session Options**
-2. **Accelerator**: chọn **GPU P100**
-3. **Persistence**: bật **ON** (giữ output qua sessions)
-4. **Internet**: bật **ON** (cần để tải weights và clone repo)
+| Setting | Giá trị |
+|---|---|
+| **Accelerator** | GPU P100 |
+| **Persistence** | Variables and Files |
+| **Internet** | ON |
 
-### Bước 3: Thêm Kaggle Dataset (cho resume training lần sau)
+### Add Data
 
-> Lần đầu tiên bỏ qua bước này. Sau khi train xong session đầu, Save Version rồi tạo Dataset từ output.
-
-1. Vào **Kaggle** → **Datasets** → **New Dataset**
-2. Upload checkpoint files từ output của notebook trước
-3. Quay lại notebook → **Add Data** → chọn Dataset vừa tạo
-4. Dataset sẽ ở `/kaggle/input/your-dataset-name/`
+1. Click **"+ Add Data"** ở thanh bên phải
+2. Tìm `thoandanh/compart` → **Add**
+3. Dataset sẽ ở `/kaggle/input/compart/`
 
 ---
 
@@ -85,39 +81,72 @@ Copy-paste từng cell bên dưới vào notebook Kaggle theo đúng thứ tự.
 
 ---
 
-### Cell 1 — 🔍 Kiểm tra GPU
+### Cell 0 — ⚡ Setup Môi Trường (CHẠY ĐẦU TIÊN)
 
-```python
-!nvidia-smi
-import torch
-gpu_name = torch.cuda.get_device_name(0)
-vram_gb = torch.cuda.get_device_properties(0).total_mem / 1024**3
-print(f"\n✅ GPU: {gpu_name}")
-print(f"✅ VRAM: {vram_gb:.1f} GB")
-print(f"✅ CUDA: {torch.version.cuda}")
-print(f"✅ PyTorch: {torch.__version__}")
-
-if "P100" in gpu_name:
-    print("✅ Đúng GPU P100 — config đã tối ưu cho GPU này")
-elif "T4" in gpu_name:
-    print("⚠️ Đang dùng T4, không phải P100 — vẫn chạy được nhưng nên chọn P100 trong Settings")
-else:
-    print(f"⚠️ GPU không phải P100: {gpu_name}")
-```
-
-**Mục đích**: Xác nhận GPU P100 được cấp phát. Nếu thấy T4 hoặc GPU khác, vào Settings đổi lại.
-
----
-
-### Cell 2 — 📥 Clone Repo & Setup
+> **Cell quan trọng nhất!** Phải chạy trước mọi cell khác để tránh tràn disk.
 
 ```python
 import os
 
-# === SỬA URL GITHUB CỦA BẠN Ở ĐÂY ===
-GITHUB_REPO = "https://github.com/YOUR_USERNAME/ArtDapter.git"
+# ====== CHUYỂN TẤT CẢ CACHE SANG /tmp/ (KHÔNG TÍNH VÀO DISK QUOTA) ======
+os.environ['HF_HOME'] = '/tmp/hf_cache'
+os.environ['TRANSFORMERS_CACHE'] = '/tmp/hf_cache/transformers'
+os.environ['HF_DATASETS_CACHE'] = '/tmp/hf_cache/datasets'
 
-# Clone repo
+# ====== SYMLINK DATASET TỪ KAGGLE INPUT VÀO HF CACHE ======
+# Dataset CompArt đã upload lên Kaggle → nằm ở /kaggle/input/compart/
+# Symlink vào HF cache để load_dataset() không tải lại từ mạng
+
+hf_cache_dir = '/tmp/hf_cache/datasets'
+os.makedirs(hf_cache_dir, exist_ok=True)
+
+# Tìm và link thư mục dataset cache
+input_dir = '/kaggle/input/compart'
+if os.path.exists(input_dir):
+    # Liệt kê nội dung xem cấu trúc
+    for item in os.listdir(input_dir):
+        src = os.path.join(input_dir, item)
+        dst = os.path.join(hf_cache_dir, item)
+        if not os.path.exists(dst):
+            os.symlink(src, dst)
+            print(f'🔗 Linked: {src} → {dst}')
+    print('✅ Dataset CompArt đã link từ Kaggle Input')
+else:
+    print('⚠️ Chưa add dataset "thoandanh/compart" vào notebook!')
+    print('   → Click "+ Add Data" → tìm "thoandanh/compart" → Add')
+
+print(f'\n📁 HF_HOME = {os.environ["HF_HOME"]}')
+print(f'📁 HF_DATASETS_CACHE = {os.environ["HF_DATASETS_CACHE"]}')
+```
+
+**Mục đích**: Chuyển toàn bộ HuggingFace cache sang `/tmp/` (không tốn disk quota) và symlink dataset CompArt từ Kaggle Input.
+
+---
+
+### Cell 1 — 🔍 Kiểm tra GPU
+
+```python
+import torch
+!nvidia-smi
+gpu_name = torch.cuda.get_device_name(0)
+vram_gb = torch.cuda.get_device_properties(0).total_mem / 1024**3
+print(f"\n✅ GPU: {gpu_name} | VRAM: {vram_gb:.1f} GB | CUDA: {torch.version.cuda}")
+
+if "P100" in gpu_name:
+    print("✅ Đúng GPU P100")
+else:
+    print(f"⚠️ GPU không phải P100: {gpu_name} — vẫn chạy được nếu VRAM >= 16GB")
+```
+
+---
+
+### Cell 2 — 📥 Clone Repo
+
+```python
+import os
+
+GITHUB_REPO = "https://github.com/paingoat/ArtDapter-reproduce.git"
+
 if not os.path.exists('/kaggle/working/ArtDapter'):
     !git clone {GITHUB_REPO} /kaggle/working/ArtDapter
 
@@ -128,8 +157,6 @@ if not os.path.exists('/kaggle/working/ArtDapter'):
 !mkdir -p /kaggle/working/ArtDapter/ckpt/init
 ```
 
-**Mục đích**: Clone source code từ GitHub vào Kaggle. Nếu notebook đã có repo (từ session trước), sẽ bỏ qua.
-
 ---
 
 ### Cell 3 — 📦 Cài Dependencies
@@ -139,53 +166,52 @@ if not os.path.exists('/kaggle/working/ArtDapter'):
     omegaconf einops wandb datasets safetensors open-clip-torch tqdm Pillow
 ```
 
-**Mục đích**: Cài tất cả thư viện cần thiết. PyTorch đã có sẵn trên Kaggle.
-
 ---
 
 ### Cell 4 — ⬇️ Tải Pre-trained Weights
 
-> **Lần đầu**: chạy cell này để tải (~4.2GB). Các session sau: nếu đã upload weights lên Kaggle Dataset thì bỏ qua cell này.
+> Tải vào `/tmp/` rồi copy vào repo. **Mỗi session mới phải chạy lại** (vì `/tmp/` bị xóa khi session kết thúc).
 
 ```python
 import os
 
 LOCAL_INIT = '/kaggle/working/ArtDapter/ckpt/init'
+TMP_WEIGHTS = '/tmp/pretrained_weights'
+os.makedirs(TMP_WEIGHTS, exist_ok=True)
 
 # --- Stable Diffusion v1.5 weights (~4GB) ---
-sd_path = f'{LOCAL_INIT}/v1-5-pruned.ckpt'
-if not os.path.exists(sd_path):
-    print('📥 Downloading Stable Diffusion v1.5 weights (~4GB)...')
-    !wget -q --show-progress -O {sd_path} \
-        https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned.ckpt
-else:
-    print('✅ SD v1.5 weights đã có')
+sd_path = f'{TMP_WEIGHTS}/v1-5-pruned.ckpt'
+sd_link = f'{LOCAL_INIT}/v1-5-pruned.ckpt'
+if not os.path.exists(sd_link):
+    if not os.path.exists(sd_path):
+        print('📥 Downloading Stable Diffusion v1.5 weights (~4GB)...')
+        !wget -q --show-progress -O {sd_path} \
+            https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned.ckpt
+    !ln -sf {sd_path} {sd_link}
+    print('✅ SD v1.5 linked')
 
 # --- ELLA weights (~200MB) ---
-ella_path = f'{LOCAL_INIT}/ella-sd1.5-tsc-t5xl.safetensors'
-if not os.path.exists(ella_path):
-    print('📥 Downloading ELLA weights (~200MB)...')
-    !wget -q --show-progress -O {ella_path} \
-        https://huggingface.co/QQGYLab/ELLA/resolve/main/ella-sd1.5-tsc-t5xl.safetensors
-else:
-    print('✅ ELLA weights đã có')
+ella_path = f'{TMP_WEIGHTS}/ella-sd1.5-tsc-t5xl.safetensors'
+ella_link = f'{LOCAL_INIT}/ella-sd1.5-tsc-t5xl.safetensors'
+if not os.path.exists(ella_link):
+    if not os.path.exists(ella_path):
+        print('📥 Downloading ELLA weights (~200MB)...')
+        !wget -q --show-progress -O {ella_path} \
+            https://huggingface.co/QQGYLab/ELLA/resolve/main/ella-sd1.5-tsc-t5xl.safetensors
+    !ln -sf {ella_path} {ella_link}
+    print('✅ ELLA linked')
 
-print('\n✅ Tất cả pre-trained weights đã sẵn sàng')
+# Kiểm tra disk
+!echo ""; df -h / | head -2; echo ""; du -sh /tmp/pretrained_weights/
 ```
 
-**Mục đích**: Tải Stable Diffusion v1.5 và ELLA weights. Nếu đã có (do session trước chưa bị xóa) thì bỏ qua.
-
-> 💡 **Mẹo tiết kiệm thời gian**: Sau lần tải đầu, upload folder `ckpt/init/` lên **Kaggle Dataset**. Các session sau chỉ cần symlink:
-> ```python
-> !ln -sf /kaggle/input/artdapter-weights/v1-5-pruned.ckpt /kaggle/working/ArtDapter/ckpt/init/v1-5-pruned.ckpt
-> !ln -sf /kaggle/input/artdapter-weights/ella-sd1.5-tsc-t5xl.safetensors /kaggle/working/ArtDapter/ckpt/init/ella-sd1.5-tsc-t5xl.safetensors
-> ```
+**Mục đích**: Tải weights vào `/tmp/` (không tốn disk quota), symlink vào repo.
 
 ---
 
 ### Cell 5 — 🔧 Prepare Initial Weights
 
-> Chạy **1 lần duy nhất**. Merge SD v1.5 pre-trained weights + random ArtDapter weights → `init.ckpt`.
+> Chỉ cần chạy **1 lần đầu tiên**. Nếu đã có `init.ckpt` (từ session trước hoặc Kaggle Dataset), bỏ qua cell này.
 
 ```python
 import os
@@ -193,76 +219,69 @@ import os
 init_ckpt = '/kaggle/working/ArtDapter/ckpt/init/init.ckpt'
 
 if not os.path.exists(init_ckpt):
-    print('🔧 Preparing initial weights (merge SD + random ArtDapter)...')
+    print('🔧 Preparing initial weights...')
     !python prepare_weights.py \
         --init_dir /kaggle/working/ArtDapter/ckpt/init \
         --output init.ckpt \
         --config configs/train_config_kaggle.yaml
     print('✅ init.ckpt đã tạo xong')
+
+    # Xóa raw weights (đã merge vào init.ckpt rồi) để tiết kiệm disk
+    !rm -f /kaggle/working/ArtDapter/ckpt/init/v1-5-pruned.ckpt
+    !rm -f /kaggle/working/ArtDapter/ckpt/init/ella-sd1.5-tsc-t5xl.safetensors
+    print('🗑️ Đã xóa raw weights (đã merge vào init.ckpt)')
 else:
     print('✅ init.ckpt đã tồn tại')
 ```
 
-**Mục đích**: Tạo checkpoint khởi tạo gồm SD backbone (pre-trained) + ArtDapter module (random weights).
-
-> 💡 **Lưu lại init.ckpt**: Upload `init.ckpt` lên Kaggle Dataset để không cần tạo lại.
+> 💡 **Mẹo**: Sau lần đầu, upload `init.ckpt` lên **Kaggle Dataset** rồi symlink:
+> ```python
+> !ln -sf /kaggle/input/artdapter-weights/init.ckpt /kaggle/working/ArtDapter/ckpt/init/init.ckpt
+> ```
 
 ---
 
-### Cell 6 — 🔑 Login WandB (Tùy chọn)
+### Cell 6 — 🔑 Login WandB
 
 ```python
 import wandb
 
-# Cách 1: Login tương tác (paste API key)
+# Cách 1: Login tương tác
 wandb.login()
 
 # Cách 2: Dùng Kaggle Secret (khuyến nghị)
-# 1. Vào Settings → Add-ons → Secrets
-# 2. Thêm secret tên "WANDB_API_KEY" với giá trị là API key từ wandb.ai/authorize
-# 3. Bật "Attach to this notebook"
-# Sau đó dùng:
+# Settings → Secrets → Add "WANDB_API_KEY" → Enable
 # from kaggle_secrets import UserSecretsClient
-# user_secrets = UserSecretsClient()
-# wandb_key = user_secrets.get_secret("WANDB_API_KEY")
-# wandb.login(key=wandb_key)
+# wandb.login(key=UserSecretsClient().get_secret("WANDB_API_KEY"))
 ```
-
-**Mục đích**: Xác thực WandB để log training metrics. Nếu không dùng WandB, cần sửa code `train.py` để bỏ WandB logger.
 
 ---
 
-### Cell 7 — 🔎 Tìm Checkpoint (cho Resume Training)
+### Cell 7 — 🔎 Tìm Checkpoint (Resume)
 
 ```python
 import glob
 
-# Tìm trong output của notebook hiện tại
 CKPT_DIR = '/kaggle/working/ckpt/trained'
 ckpts = sorted(glob.glob(f'{CKPT_DIR}/*.ckpt'))
 
-# Cũng tìm trong Kaggle Dataset (nếu đã upload checkpoint từ session trước)
-# Uncomment dòng dưới và đổi tên dataset cho đúng:
-# DATASET_CKPT_DIR = '/kaggle/input/artdapter-checkpoints'
-# ckpts += sorted(glob.glob(f'{DATASET_CKPT_DIR}/*.ckpt'))
+# Nếu có checkpoint trên Kaggle Dataset, thêm ở đây:
+# ckpts += sorted(glob.glob('/kaggle/input/artdapter-checkpoints/*.ckpt'))
 
-# Phân loại checkpoints
 normal_ckpts = [c for c in ckpts if 'EXCEPTION' not in c]
 exception_ckpts = [c for c in ckpts if 'EXCEPTION' in c]
 
 if normal_ckpts:
     RESUME_CKPT = normal_ckpts[-1]
-    print(f'📌 Checkpoint tìm thấy: {RESUME_CKPT}')
-    print(f'   Tổng: {len(normal_ckpts)} normal, {len(exception_ckpts)} exception')
+    print(f'📌 Checkpoint: {RESUME_CKPT}')
+    print(f'   ({len(normal_ckpts)} normal, {len(exception_ckpts)} exception)')
 elif exception_ckpts:
     RESUME_CKPT = exception_ckpts[-1]
     print(f'⚠️ Chỉ có exception checkpoint: {RESUME_CKPT}')
 else:
     RESUME_CKPT = None
-    print('🆕 Không có checkpoint — sẽ train từ đầu')
+    print('🆕 Không có checkpoint — train từ đầu')
 ```
-
-**Mục đích**: Auto-detect checkpoint mới nhất. Nếu đã upload checkpoint lên Kaggle Dataset, uncomment phần `DATASET_CKPT_DIR`.
 
 ---
 
@@ -282,87 +301,61 @@ else:
         --gpus 0
 ```
 
-**Mục đích**: Chạy training loop. Checkpoint tự động lưu tại `/kaggle/working/ckpt/trained/` mỗi 200 steps.
-
-### Ước tính thời gian training trên P100
+#### Ước tính thời gian
 
 | Metric | Giá trị |
 |---|---|
-| Effective batch size | 24 (4 × 6) |
 | Tốc độ ước tính | ~1.5-2.0 s/step |
-| Steps/session (12h) | ~21,600-28,800 steps |
-| Tổng steps cần | 280,000 |
-| Tổng sessions ≈ | **10-13 sessions** |
-| Tổng giờ GPU ≈ | **~120-160 giờ** (~4-5 tuần Kaggle quota) |
+| Steps/session (12h) | ~21,600-28,800 |
+| Tổng steps | 280,000 |
+| Tổng sessions | ~10-13 |
 
 ---
 
-### Cell 9 — 📊 Kiểm tra Checkpoint
+### Cell 9 — 📊 Kiểm tra Checkpoint & Disk
 
 ```python
 import os
 
+# Checkpoints
 ckpt_dir = '/kaggle/working/ckpt/trained'
 if os.path.exists(ckpt_dir):
     !ls -lh {ckpt_dir}
 else:
-    print('❌ Chưa có checkpoint nào')
-```
-
-**Mục đích**: Xem danh sách checkpoints đã lưu.
-
----
-
-### Cell 10 — 💾 Lưu Checkpoint cho Session Sau
-
-> **QUAN TRỌNG**: Trước khi session kết thúc, chạy cell này để đảm bảo checkpoint được lưu.
-
-```python
-# Cách 1: Save Version (đơn giản nhất)
-# Click "Save Version" (góc phải trên) → chọn "Quick Save"
-# Output folder sẽ được giữ lại
-
-# Cách 2: Copy checkpoint vào output (nếu cần)
-import shutil
-import glob
-
-ckpt_dir = '/kaggle/working/ckpt/trained'
-ckpts = sorted(glob.glob(f'{ckpt_dir}/*.ckpt'))
-
-if ckpts:
-    latest = ckpts[-1]
-    print(f'📌 Latest checkpoint: {latest}')
-    print(f'📏 Size: {os.path.getsize(latest) / 1024**3:.2f} GB')
-    print('\n💡 Để giữ checkpoint cho session sau:')
-    print('   1. Click "Save Version" → "Quick Save"')
-    print('   2. Hoặc tạo Kaggle Dataset từ output để dùng lâu dài')
-else:
     print('❌ Chưa có checkpoint')
+
+# Disk usage
+print('\n📊 Disk usage:')
+!df -h / | head -2
+!echo "Output: $(du -sh /kaggle/working/ 2>/dev/null | cut -f1)"
+!echo "Tmp: $(du -sh /tmp/ 2>/dev/null | cut -f1)"
 ```
 
 ---
 
 ## 4. Các Cell cho Inference
 
-> Inference có thể chạy trong **cùng notebook** (sau khi train xong) hoặc **notebook riêng**.
+> Chạy trong **cùng notebook** (sau khi train) hoặc **notebook riêng**.
 
 ---
 
 ### Cell Inference 1 — Setup (nếu notebook mới)
 
-> Bỏ qua cell này nếu đang ở cùng notebook đã train.
+> Bỏ qua nếu đang cùng notebook đã train.
 
 ```python
 import os
 
-# Clone repo (nếu chưa có)
-GITHUB_REPO = "https://github.com/YOUR_USERNAME/ArtDapter.git"
+# Setup cache (PHẢI chạy đầu tiên)
+os.environ['HF_HOME'] = '/tmp/hf_cache'
+os.environ['TRANSFORMERS_CACHE'] = '/tmp/hf_cache/transformers'
+os.environ['HF_DATASETS_CACHE'] = '/tmp/hf_cache/datasets'
+
+GITHUB_REPO = "https://github.com/paingoat/ArtDapter-reproduce.git"
 if not os.path.exists('/kaggle/working/ArtDapter'):
     !git clone {GITHUB_REPO} /kaggle/working/ArtDapter
-
 %cd /kaggle/working/ArtDapter
 
-# Cài dependencies
 !pip install -q pytorch-lightning lightning transformers diffusers \
     omegaconf einops wandb datasets safetensors open-clip-torch tqdm Pillow
 ```
@@ -375,35 +368,30 @@ if not os.path.exists('/kaggle/working/ArtDapter'):
 import torch
 import einops
 from omegaconf import OmegaConf
-from pytorch_lightning import Trainer, seed_everything
+from pytorch_lightning import seed_everything
 
-from dataset import CompArt
 from ldm.util import instantiate_from_config
 from models import load_state_dict
 from ldm.models.diffusion.custom_ddim import CustomDDIMSampler
 
 # ====== CẤU HÌNH ======
-CHECKPOINT_PATH = "/kaggle/working/ckpt/trained/YOUR_CHECKPOINT.ckpt"  # ← Đổi tên checkpoint
-CONFIG_PATH = "configs/inference_config_kaggle.yaml"
+CHECKPOINT_PATH = "/kaggle/working/ckpt/trained/YOUR_CHECKPOINT.ckpt"  # ← Đổi tên
 SEED = 42
-NUM_SAMPLES = 4          # Số ảnh generate
-DDIM_STEPS = 50           # Số bước diffusion (nhiều hơn = chi tiết hơn, chậm hơn)
-CFG_SCALE = 7.5           # Guidance scale (cao hơn = bám prompt hơn)
+NUM_SAMPLES = 4
+DDIM_STEPS = 50
+CFG_SCALE = 7.5
 RESOLUTION = 512
 # =======================
 
 seed_everything(SEED)
-config = OmegaConf.load(CONFIG_PATH)
+config = OmegaConf.load("configs/inference_config_kaggle.yaml")
 
-# Load model
-print(f'📥 Loading model from {CHECKPOINT_PATH}...')
+print(f'📥 Loading model...')
 model = instantiate_from_config(config.model)
-state_dict = load_state_dict(CHECKPOINT_PATH, location='cpu')
-model.load_state_dict(state_dict)
+model.load_state_dict(load_state_dict(CHECKPOINT_PATH, location='cpu'))
 model = model.cuda().eval()
 print('✅ Model loaded')
 
-# Tạo DDIM sampler
 ddim_sampler = CustomDDIMSampler(model)
 ```
 
@@ -412,30 +400,21 @@ ddim_sampler = CustomDDIMSampler(model)
 ### Cell Inference 3 — Nhập Prompt & Generate
 
 ```python
-# ====== NHẬP PROMPT Ở ĐÂY ======
+# ====== NHẬP PROMPT ======
 prompt = "A serene landscape with mountains reflected in a calm lake"
 art_style = "Impressionism"
-
-# Principles of Art (để trống "" nếu không muốn chỉ định)
 PoA = [
-    "Asymmetric balance with the mountain on the left balanced by open sky on the right.",  # Balance
-    "Cool blues and greens create a harmonious color palette.",                              # Harmony
-    "Variety in brush strokes from smooth water to textured mountains.",                     # Variety
-    "",  # Unity
-    "Strong contrast between dark mountains and bright sky.",                                # Contrast
-    "",  # Emphasis
-    "",  # Proportion
-    "Gentle movement suggested by ripples in the water.",                                    # Movement
-    "",  # Rhythm
-    ""   # Pattern
+    "Asymmetric balance with the mountain on the left balanced by open sky on the right.",
+    "Cool blues and greens create a harmonious color palette.",
+    "Variety in brush strokes from smooth water to textured mountains.",
+    "", "", "", "", 
+    "Gentle movement suggested by ripples in the water.",
+    "", ""
 ]
-# =================================
+# =========================
 
-# Tạo conditioning
 caption = model.apply_prompt_template(
-    [prompt] * NUM_SAMPLES,
-    [art_style] * NUM_SAMPLES,
-    [PoA] * NUM_SAMPLES
+    [prompt] * NUM_SAMPLES, [art_style] * NUM_SAMPLES, [PoA] * NUM_SAMPLES
 )
 
 with torch.no_grad():
@@ -444,19 +423,13 @@ with torch.no_grad():
 
     print(f'🎨 Generating {NUM_SAMPLES} images...')
     z_samples, _ = ddim_sampler.sample(
-        conditioning=cond,
-        S=DDIM_STEPS,
-        batch_size=NUM_SAMPLES,
-        shape=(4, RESOLUTION // 8, RESOLUTION // 8),
-        verbose=False,
-        eta=0.0,
-        unconditional_guidance_scale=CFG_SCALE,
+        conditioning=cond, S=DDIM_STEPS, batch_size=NUM_SAMPLES,
+        shape=(4, RESOLUTION // 8, RESOLUTION // 8), verbose=False,
+        eta=0.0, unconditional_guidance_scale=CFG_SCALE,
         unconditional_conditioning=un_cond,
     )
-
     x_samples = model.decode_first_stage(z_samples)
-    x_samples = (einops.rearrange(x_samples, 'b c h w -> b h w c') * 0.5 + 0.5).clamp(0, 1)
-    x_samples = x_samples.cpu().numpy()
+    x_samples = (einops.rearrange(x_samples, 'b c h w -> b h w c') * 0.5 + 0.5).clamp(0, 1).cpu().numpy()
     print('✅ Done!')
 ```
 
@@ -466,121 +439,83 @@ with torch.no_grad():
 
 ```python
 import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image
 
 fig, axes = plt.subplots(1, NUM_SAMPLES, figsize=(5 * NUM_SAMPLES, 5))
-if NUM_SAMPLES == 1:
-    axes = [axes]
+if NUM_SAMPLES == 1: axes = [axes]
 
 for i, ax in enumerate(axes):
     ax.imshow(x_samples[i])
     ax.set_title(f'Sample {i+1}')
     ax.axis('off')
 
-plt.suptitle(f'Prompt: "{prompt}" | Style: {art_style}', fontsize=14, y=1.02)
+plt.suptitle(f'"{prompt}" | {art_style}', fontsize=14, y=1.02)
 plt.tight_layout()
 plt.savefig('/kaggle/working/inference_output.png', dpi=150, bbox_inches='tight')
 plt.show()
-print('💾 Saved to /kaggle/working/inference_output.png')
-```
 
----
-
-### Cell Inference 5 — Lưu Ảnh Riêng Lẻ
-
-```python
-from PIL import Image
-import numpy as np
-
+# Lưu ảnh riêng
 output_dir = '/kaggle/working/generated_images'
 os.makedirs(output_dir, exist_ok=True)
-
-for i, sample in enumerate(x_samples):
-    img = Image.fromarray((sample * 255).astype(np.uint8))
-    img_path = f'{output_dir}/sample_{i+1}.png'
-    img.save(img_path)
-    print(f'💾 Saved: {img_path}')
-
-print(f'\n✅ {NUM_SAMPLES} images saved to {output_dir}/')
+for i, s in enumerate(x_samples):
+    Image.fromarray((s * 255).astype(np.uint8)).save(f'{output_dir}/sample_{i+1}.png')
+print(f'💾 Saved {NUM_SAMPLES} images to {output_dir}/')
 ```
 
 ---
 
 ## 5. Cheat Sheet: Session Mới
 
-### Workflow tổng quan
+### Workflow
 
 ```
-Session 1 (lần đầu):
-  Cell 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
-  (Kiểm tra GPU → Clone → Cài lib → Tải weights → Prepare → WandB → Tìm ckpt → Train)
+Lần đầu tiên:
+  Cell 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
-Session 2+ (resume):
-  Cell 1 → 2 → 3 → (bỏ 4,5) → 6 → 7 → 8
-  (Nếu đã upload weights/init.ckpt lên Kaggle Dataset)
+Các lần sau (resume):
+  Cell 0 → 1 → 2 → 3 → (bỏ 4, 5 nếu đã upload init.ckpt lên Dataset) → 6 → 7 → 8
 
-Inference (sau khi train xong):
-  Inference Cell 1 (nếu notebook mới) → 2 → 3 → 4 → 5
+Inference:
+  Inference Cell 1 → 2 → 3 → 4
 ```
 
-### Bảng tóm tắt
-
-| Lần đầu | Các lần sau (resume) |
+| Lần đầu | Các lần sau |
 |---|---|
-| Cell 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 | Cell 1 → 2 → 3 → **(bỏ 4, 5)** → 6 → 7 → 8 |
+| Cell 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 | Cell 0 → 1 → 2 → 3 → **(bỏ 4, 5)** → 6 → 7 → 8 |
 
-> Cell 4 (tải weights) và Cell 5 (prepare init) chỉ cần chạy **lần đầu**.
-> Nếu muốn bỏ qua các lần sau, upload `ckpt/init/` lên **Kaggle Dataset**.
+> ⚠️ **Cell 0 LUÔN PHẢI chạy đầu tiên** mỗi session để setup cache và symlink dataset.
 
 ### Cách giữ checkpoint giữa các sessions
 
-1. **Quick Save**: Click "Save Version" → Output tại `/kaggle/working/` được lưu
-2. **Kaggle Dataset** (khuyến nghị cho lâu dài):
-   - Sau khi train → click "Save Version"
-   - Vào version đó → **"New Dataset"** từ output
-   - Session sau: Add Data → chọn Dataset → checkpoint ở `/kaggle/input/...`
+1. **Quick Save**: Click "Save Version" → chọn "Quick Save"
+2. **Kaggle Dataset** (khuyến nghị):
+   - Save Version → vào output → "New Dataset" → dùng cho session sau
 
 ---
 
 ## 6. FAQ & Troubleshooting
 
-### Q: Lỗi "CUDA out of memory"?
-
-**A**: Giảm `batch_size` trong `configs/train_config_kaggle.yaml`:
-```yaml
-dataloader:
-  batch_size: 2  # giảm từ 4 xuống 2
-```
-Và tăng `accumulate_grad_batches` để giữ effective batch size:
-```yaml
-accumulate_grad_batches: 12  # 2 × 12 = 24
-```
-
-### Q: Kaggle không cho chọn GPU P100?
-
-**A**: P100 có thể hết quota (30h/tuần). Chờ quota reset hàng tuần hoặc dùng T4 (cũng 16GB VRAM, config tương thích).
-
-### Q: Lỗi "No module named ..."?
-
-**A**: Chạy lại Cell 3 (cài dependencies). Nếu vẫn lỗi, thử:
+### Q: Lỗi "No space left on device" / Disk tràn?
+**A**: Chạy lệnh dọn dẹp:
 ```python
-!pip install --force-reinstall pytorch-lightning lightning transformers
+!rm -rf ~/.cache/huggingface
+!pip cache purge
+!rm -rf /kaggle/working/ArtDapter/ckpt/init/v1-5-pruned.ckpt
+!rm -rf /kaggle/working/ArtDapter/ckpt/init/ella-sd1.5-tsc-t5xl.safetensors
 ```
 
-### Q: WandB không login được?
-
-**A**: Dùng Kaggle Secrets:
-1. **Settings** → **Secrets** → **Add Secret**
-2. Name: `WANDB_API_KEY`, Value: lấy từ [wandb.ai/authorize](https://wandb.ai/authorize)
-3. Enable cho notebook hiện tại
+### Q: Lỗi "CUDA out of memory"?
+**A**: Giảm `batch_size` xuống 2 trong `train_config_kaggle.yaml`, tăng `accumulate_grad_batches` lên 12.
 
 ### Q: Training bị ngắt giữa chừng?
+**A**: Checkpoint tự lưu mỗi 200 steps + exception checkpoint khi crash. Chạy lại từ Cell 0 → ... → Cell 7 (tìm checkpoint) → Cell 8.
 
-**A**: Checkpoint tự động lưu mỗi 200 steps. Chạy lại từ Cell 7 (tìm checkpoint) → Cell 8 (resume training).
-
-### Q: Muốn dùng T4 thay P100?
-
-**A**: Config `train_config_kaggle.yaml` tương thích với cả T4 (cùng 16GB VRAM, cùng hỗ trợ FP16). Chỉ cần đổi GPU type trong Settings.
+### Q: Dataset CompArt không load được từ Kaggle Input?
+**A**: Kiểm tra đã Add Data chưa. Nếu symlink không hoạt động, dùng cách thủ công:
+```python
+os.environ['HF_DATASETS_CACHE'] = '/kaggle/input/compart'
+```
 
 ### Q: Tốc độ training bao nhiêu?
-
-**A**: P100 ước tính ~1.5-2.0 s/step (với batch=4, accumulate=6). Mỗi session 12h ≈ 21,000-28,000 steps. Tổng 280K steps cần khoảng 10-13 sessions.
+**A**: P100 ≈ 1.5-2.0 s/step. Mỗi session 12h ≈ 21,000-28,000 steps. Tổng 280K steps ≈ 10-13 sessions (~4-5 tuần).
