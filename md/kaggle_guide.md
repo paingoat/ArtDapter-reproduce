@@ -31,11 +31,11 @@
 | **Input** | **Không giới hạn** | `/kaggle/input/` | ⭐ Kaggle Dataset — **MIỄN PHÍ** |
 | `/tmp/` | Dùng chung Disk | `/tmp/` | **Không tính vào quota** |
 
-> ⚠️ **Nguyên nhân tràn Disk phổ biến nhất**: HuggingFace tự tải T5-XL (~10GB) + CompArt dataset (~27GB) vào `~/.cache/huggingface/` → vượt 58GB disk.
+> ⚠️ **Nguyên nhân tràn Disk phổ biến nhất**: HuggingFace tự tải T5-XL (~10GB) vào `~/.cache/huggingface/` → chiếm disk nhanh chóng.
 
 ### Chiến lược tối ưu (đã áp dụng trong guide này)
 
-1. ✅ CompArt dataset → đã upload lên **Kaggle Dataset** (`/kaggle/input/`) → **0 byte disk**
+1. ✅ CompArt dataset → đã upload lên **Kaggle Dataset** (`/kaggle/input/`) → config trỏ thẳng, **0 download, 0 byte disk**
 2. ✅ HuggingFace cache (T5-XL model) → chuyển sang `/tmp/` → **không tính quota**
 3. ✅ Pre-trained weights (SD v1.5, ELLA) → tải vào `/tmp/`, dùng xong xóa
 4. ✅ Checkpoint training → lưu ở `/kaggle/working/` (~4GB/file)
@@ -44,11 +44,13 @@
 
 | Setting | Giá trị | Lý do |
 |---|---|---|
+| `training_steps` | 5,000 | Survey reproduction (ước tính ~2-3 giờ) |
 | `batch_size` | 4 | P100 16GB VRAM |
 | `accumulate_grad_batches` | 6 | Effective batch = 4 × 6 = 24 ≈ 22 gốc |
 | `precision` | `16-mixed` | P100 **không** hỗ trợ bf16 |
 | `use_checkpoint` | True | Gradient checkpointing tiết kiệm VRAM |
 | `log_frequency` | 200 | Checkpoint thường xuyên |
+| `dataset_path` | `/kaggle/input/compart` | Load trực tiếp từ Kaggle Input |
 
 ---
 
@@ -89,37 +91,22 @@ Copy-paste từng cell bên dưới vào notebook Kaggle theo đúng thứ tự.
 import os
 
 # ====== CHUYỂN TẤT CẢ CACHE SANG /tmp/ (KHÔNG TÍNH VÀO DISK QUOTA) ======
+# T5-XL model (~10GB) sẽ cache ở đây thay vì ~/.cache/ (tốn disk quota)
 os.environ['HF_HOME'] = '/tmp/hf_cache'
 os.environ['TRANSFORMERS_CACHE'] = '/tmp/hf_cache/transformers'
 os.environ['HF_DATASETS_CACHE'] = '/tmp/hf_cache/datasets'
 
-# ====== SYMLINK DATASET TỪ KAGGLE INPUT VÀO HF CACHE ======
-# Dataset CompArt đã upload lên Kaggle → nằm ở /kaggle/input/compart/
-# Symlink vào HF cache để load_dataset() không tải lại từ mạng
-
-hf_cache_dir = '/tmp/hf_cache/datasets'
-os.makedirs(hf_cache_dir, exist_ok=True)
-
-# Tìm và link thư mục dataset cache
-input_dir = '/kaggle/input/compart'
-if os.path.exists(input_dir):
-    # Liệt kê nội dung xem cấu trúc
-    for item in os.listdir(input_dir):
-        src = os.path.join(input_dir, item)
-        dst = os.path.join(hf_cache_dir, item)
-        if not os.path.exists(dst):
-            os.symlink(src, dst)
-            print(f'🔗 Linked: {src} → {dst}')
-    print('✅ Dataset CompArt đã link từ Kaggle Input')
+# Kiểm tra dataset CompArt đã được add vào notebook chưa
+if os.path.exists('/kaggle/input/compart'):
+    print('✅ Dataset CompArt đã có tại /kaggle/input/compart/')
 else:
     print('⚠️ Chưa add dataset "thoandanh/compart" vào notebook!')
     print('   → Click "+ Add Data" → tìm "thoandanh/compart" → Add')
 
 print(f'\n📁 HF_HOME = {os.environ["HF_HOME"]}')
-print(f'📁 HF_DATASETS_CACHE = {os.environ["HF_DATASETS_CACHE"]}')
 ```
 
-**Mục đích**: Chuyển toàn bộ HuggingFace cache sang `/tmp/` (không tốn disk quota) và symlink dataset CompArt từ Kaggle Input.
+**Mục đích**: Chuyển HuggingFace cache (T5-XL ~10GB) sang `/tmp/` để không tốn disk quota. Dataset CompArt load trực tiếp từ `/kaggle/input/compart/` qua config — không cần symlink.
 
 ---
 
@@ -306,9 +293,8 @@ else:
 | Metric | Giá trị |
 |---|---|
 | Tốc độ ước tính | ~1.5-2.0 s/step |
-| Steps/session (12h) | ~21,600-28,800 |
-| Tổng steps | 280,000 |
-| Tổng sessions | ~10-13 |
+| Tổng steps | 5,000 (survey reproduction) |
+| Thời gian ước tính | **~2-3 giờ** (1 session) |
 
 ---
 
@@ -484,7 +470,7 @@ Inference:
 |---|---|
 | Cell 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 | Cell 0 → 1 → 2 → 3 → **(bỏ 4, 5)** → 6 → 7 → 8 |
 
-> ⚠️ **Cell 0 LUÔN PHẢI chạy đầu tiên** mỗi session để setup cache và symlink dataset.
+> ⚠️ **Cell 0 LUÔN PHẢI chạy đầu tiên** mỗi session để setup HF cache.
 
 ### Cách giữ checkpoint giữa các sessions
 
@@ -512,10 +498,7 @@ Inference:
 **A**: Checkpoint tự lưu mỗi 200 steps + exception checkpoint khi crash. Chạy lại từ Cell 0 → ... → Cell 7 (tìm checkpoint) → Cell 8.
 
 ### Q: Dataset CompArt không load được từ Kaggle Input?
-**A**: Kiểm tra đã Add Data chưa. Nếu symlink không hoạt động, dùng cách thủ công:
-```python
-os.environ['HF_DATASETS_CACHE'] = '/kaggle/input/compart'
-```
+**A**: Kiểm tra đã Add Data chưa (`"+ Add Data" → tìm "thoandanh/compart" → Add`). Config `train_config_kaggle.yaml` đã trỏ `dataset_path` thẳng đến `/kaggle/input/compart` — không cần symlink.
 
 ### Q: Tốc độ training bao nhiêu?
-**A**: P100 ≈ 1.5-2.0 s/step. Mỗi session 12h ≈ 21,000-28,000 steps. Tổng 280K steps ≈ 10-13 sessions (~4-5 tuần).
+**A**: P100 ≈ 1.5-2.0 s/step. Với 5K steps (survey) ≈ **2-3 giờ**, dư sức trong 1 session 12h.
