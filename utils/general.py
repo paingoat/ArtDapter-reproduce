@@ -51,7 +51,7 @@ def prepare_target_weights(model, init_weights_path, device='cpu'):
 
 
 def load_weights(sd_weights_path, device):
-	weights = torch.load(sd_weights_path, map_location=resolve_device(device))
+	weights = torch.load(sd_weights_path, map_location=resolve_device(device), weights_only=False)
 	if 'state_dict' in weights:
 		weights = weights['state_dict']
 	return weights
