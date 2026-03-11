@@ -4,7 +4,7 @@ import pytorch_lightning as pl
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from lightning.pytorch.loggers import WandbLogger
-from pytorch_lightning.callbacks import ModelCheckpoint, OnExceptionCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, OnExceptionCheckpoint, TQDMProgressBar
 
 from models import load_state_dict
 from ldm.util import instantiate_from_config
@@ -59,6 +59,7 @@ def main():
 		accumulate_grad_batches = accumulate_grad_batches,
 		callbacks =					[
 			instantiate_from_config(config.logger),
+			TQDMProgressBar(refresh_rate=50),
 			ModelCheckpoint(
 				dirpath =							config.training.ckpt_dir,
 				filename =						str(wandb_logger.experiment.name) + '-{epoch}-{step}',
