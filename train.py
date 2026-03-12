@@ -66,6 +66,8 @@ def main():
 				filename =						str(wandb_logger.experiment.name) + '-{epoch}-{step}',
 				every_n_train_steps =	config.logger.params.log_frequency,
 				save_top_k =					config.training.get('save_top_k', -1),
+				monitor =							'train/loss',
+				mode =								'min',
 			),
 			OnExceptionCheckpoint(config.training.ckpt_dir, f'{wandb_logger.experiment.name}_EXCEPTION')
 		]

@@ -10,6 +10,11 @@ CONFIG="${1:-configs/pod_train_config.yaml}"
 
 cd "$PROJECT_DIR"
 
+# --- Thiết lập HuggingFace cache (phải khớp với train.sh) ---
+export HF_DATASETS_CACHE="/workspace/hf_cache/datasets"
+export HF_HOME="/tmp/hf_cache"
+export TRANSFORMERS_CACHE="/tmp/hf_cache/transformers"
+
 echo "Chạy sanity check với config: $CONFIG"
 echo ""
 
