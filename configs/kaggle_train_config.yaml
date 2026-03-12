@@ -21,7 +21,7 @@ logger:
     sample: True
     use_ddim: True
     ddim_steps: 1
-    ddim_intermediates: 0
+    ddim_intermediates: 1
     ddim_eta: 0.0
     plot_denoise_rows: False
     plot_diffusion_rows: False
