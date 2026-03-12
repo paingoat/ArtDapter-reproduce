@@ -2,7 +2,7 @@
 
 > **GPU**: NVIDIA Tesla P100 — 16GB HBM2 VRAM  
 > **Repo**: `https://github.com/paingoat/ArtDapter-reproduce.git`  
-> **Config**: `configs/train_config_kaggle.yaml`  
+> **Config**: `configs/kaggle_train_config.yaml`  
 > **Dataset**: `https://www.kaggle.com/datasets/thoandanh/compart`
 
 ---
@@ -210,7 +210,7 @@ if not os.path.exists(init_ckpt):
     !python prepare_weights.py \
         --init_dir /kaggle/working/ArtDapter/ckpt/init \
         --output init.ckpt \
-        --config configs/train_config_kaggle.yaml
+        --config configs/kaggle_train_config.yaml
     print('✅ init.ckpt đã tạo xong')
 
     # Xóa raw weights (đã merge vào init.ckpt rồi) để tiết kiệm disk
@@ -278,13 +278,13 @@ else:
 if RESUME_CKPT:
     print(f'▶️ Resuming from: {RESUME_CKPT}')
     !python train.py \
-        --config_filepath configs/train_config_kaggle.yaml \
+        --config_filepath configs/kaggle_train_config.yaml \
         --gpus 0 \
         --resume_from "{RESUME_CKPT}"
 else:
     print('▶️ Starting training from scratch...')
     !python train.py \
-        --config_filepath configs/train_config_kaggle.yaml \
+        --config_filepath configs/kaggle_train_config.yaml \
         --gpus 0
 ```
 
@@ -370,7 +370,7 @@ RESOLUTION = 512
 # =======================
 
 seed_everything(SEED)
-config = OmegaConf.load("configs/inference_config_kaggle.yaml")
+config = OmegaConf.load("configs/kaggle_inference_config.yaml")
 
 print(f'📥 Loading model...')
 model = instantiate_from_config(config.model)
@@ -492,13 +492,13 @@ Inference:
 ```
 
 ### Q: Lỗi "CUDA out of memory"?
-**A**: Giảm `batch_size` xuống 1 trong `train_config_kaggle.yaml`, tăng `accumulate_grad_batches` lên 24.
+**A**: Giảm `batch_size` xuống 1 trong `kaggle_train_config.yaml`, tăng `accumulate_grad_batches` lên 24.
 
 ### Q: Training bị ngắt giữa chừng?
 **A**: Checkpoint tự lưu mỗi 200 steps + exception checkpoint khi crash. Chạy lại từ Cell 0 → ... → Cell 7 (tìm checkpoint) → Cell 8.
 
 ### Q: Dataset CompArt không load được từ Kaggle Input?
-**A**: Kiểm tra đã Add Data chưa (`"+ Add Data" → tìm "thoandanh/compart" → Add`). Config `train_config_kaggle.yaml` đã trỏ `dataset_path` thẳng đến `/kaggle/input/datasets/thoandanh/compart` — không cần symlink.
+**A**: Kiểm tra đã Add Data chưa (`"+ Add Data" → tìm "thoandanh/compart" → Add`). Config `kaggle_train_config.yaml` đã trỏ `dataset_path` thẳng đến `/kaggle/input/datasets/thoandanh/compart` — không cần symlink.
 
 ### Q: Tốc độ training bao nhiêu?
 **A**: P100 ≈ 1.5-2.0 s/step. Với 5K steps (survey) ≈ **2-3 giờ**, dư sức trong 1 session 12h.
