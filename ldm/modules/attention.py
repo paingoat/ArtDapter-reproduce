@@ -168,29 +168,16 @@ class CrossAttention(nn.Module):
         k = self.to_k(context)
         v = self.to_v(context)
 
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
+        # Reshape to (batch, heads, seq_len, dim_head) for SDPA
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=h), (q, k, v))
 
-        # force cast to fp32 to avoid overflowing
-        if _ATTN_PRECISION =="fp32":
-            with torch.autocast(enabled=False, device_type = 'cuda'):
-                q, k = q.float(), k.float()
-                sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
-        else:
-            sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
-        
-        del q, k
-    
-        if exists(mask):
-            mask = rearrange(mask, 'b ... -> b (...)')
-            max_neg_value = -torch.finfo(sim.dtype).max
-            mask = repeat(mask, 'b j -> (b h) () j', h=h)
-            sim.masked_fill_(~mask, max_neg_value)
+        # Use PyTorch's built-in scaled_dot_product_attention (memory-efficient, flash-aware)
+        with torch.nn.attention.sdpa_kernel([torch.nn.attention.SDPBackend.FLASH_ATTENTION,
+                                             torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION,
+                                             torch.nn.attention.SDPBackend.MATH]):
+            out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
 
-        # attention, what we cannot get enough of
-        sim = sim.softmax(dim=-1)
-
-        out = einsum('b i j, b j d -> b i d', sim, v)
-        out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
+        out = rearrange(out, 'b h n d -> b n (h d)')
         return self.to_out(out)
 
 
@@ -251,6 +238,7 @@ class BasicTransformerBlock(nn.Module):
     def __init__(self, dim, n_heads, d_head, dropout=0., context_dim=None, gated_ff=True, checkpoint=True,
                  disable_self_attn=False):
         super().__init__()
+        # Prefer xformers if available, otherwise use vanilla (now backed by SDPA)
         attn_mode = "softmax-xformers" if XFORMERS_IS_AVAILBLE else "softmax"
         assert attn_mode in self.ATTENTION_MODES
         attn_cls = self.ATTENTION_MODES[attn_mode]
