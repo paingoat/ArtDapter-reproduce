@@ -249,6 +249,7 @@ bash control/inference.sh --ckpt ckpt/trained/step=5000-loss=0.03.ckpt
 - **RunPod**: Dùng port forwarding SSH hoặc expose port 8501 khi tạo pod:
   ```bash
   ssh -L 8501:localhost:8501 root@<pod-ip> -p <port>
+  ssh -L 8501:localhost:8501 root@82.221.170.234 -p 23863
   ```
   Mở http://localhost:8501 trên máy local.
 
