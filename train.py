@@ -17,6 +17,7 @@ def get_args():
 	parser.add_argument('--gpus',							'-g',		type=str,	default='0')
 	parser.add_argument('--warning_traceback',	'-wt',	action='store_true')
 	parser.add_argument('--resume_from',				'-r',		type=str,	default=None, help='Path to checkpoint to resume training from')
+	parser.add_argument('--wandb_dir',					'-wd',	type=str,	default=None, help='Directory for wandb run files/media cache (default: ./wandb). Use /tmp/wandb to avoid filling SSD.')
 	return parser.parse_args()
 
 
@@ -41,7 +42,7 @@ def main():
 	dataset = instantiate_from_config(config.dataset)
 	dataloader = DataLoader(dataset, collate_fn=dataset.collate_fn, **dict(config.training.dataloader))
 
-	wandb_logger = WandbLogger(project="ArtDapter")
+	wandb_logger = WandbLogger(project="ArtDapter", save_dir=args.wandb_dir or '.')
 	wandb_logger.watch(model, log="all", log_freq=config.logger.params.log_frequency)
 	rank_zero_call(wandb_logger.experiment.config, 'update', OmegaConf.to_container(config, resolve=True))
 
@@ -63,7 +64,8 @@ def main():
 			ModelCheckpoint(
 				dirpath =							config.training.ckpt_dir,
 				filename =						str(wandb_logger.experiment.name) + '-{epoch}-{step}',
-				every_n_train_steps =	config.logger.params.log_frequency
+				every_n_train_steps =	config.logger.params.log_frequency,
+				save_top_k =					config.training.get('save_top_k', -1),
 			),
 			OnExceptionCheckpoint(config.training.ckpt_dir, f'{wandb_logger.experiment.name}_EXCEPTION')
 		]

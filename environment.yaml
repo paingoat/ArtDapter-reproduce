@@ -1,0 +1,52 @@
+name: artgen
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+
+  # === PyTorch + CUDA (RTX 5090 → CUDA 12.8.1, RunPod template torch280) ===
+  - pytorch=2.8.0
+  - torchvision=0.22.0
+  - torchaudio=2.8.0
+  - pytorch-cuda=12.8
+
+  # === Các package hệ thống ===
+  - numpy
+  - pillow
+  - tqdm
+
+  # === Pip packages ===
+  - pip:
+      # Core training framework
+      - pytorch-lightning==2.1.4
+      - lightning==2.1.4
+
+      # HuggingFace ecosystem
+      - transformers>=4.36.0
+      - datasets>=2.16.0
+      - safetensors>=0.4.0
+
+      # Diffusion & text encoders
+      - diffusers>=0.25.0
+      - open-clip-torch>=2.24.0
+      - sentencepiece # T5 tokenizer dependency
+
+      # Config & logging
+      - omegaconf>=2.3.0
+      - wandb>=0.16.0
+
+      # Tensor utilities
+      - einops>=0.7.0
+
+      # Inference UI
+      - streamlit>=1.30.0
+
+      # Memory-efficient attention (highly recommended for RTX 5090)
+      - xformers>=0.0.30 # match PyTorch 2.8.0 + CUDA 12.8
+
+      # Font for log_txt_as_img visualization
+      - fonttools

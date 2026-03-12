@@ -5,6 +5,7 @@ training:
   strategy: auto
   training_steps: 5  # survey reproduction (ước tính ~2-3 giờ trên P100)
   ckpt_dir: /kaggle/working/ckpt/trained
+  save_top_k: 3              # giữ 3 checkpoint gần nhất, tự xóa cũ
   accumulate_grad_batches: 11  # effective batch = 2 * 12 = 24 (gần bằng batch 22 gốc)
   dataloader:
     batch_size: 2  # P100 16GB VRAM (giảm xuống 2 để tránh OOM)

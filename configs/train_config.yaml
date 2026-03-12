@@ -5,6 +5,7 @@ training:
   strategy: auto
   training_steps: 280000
   ckpt_dir: ./ckpt/trained
+  save_top_k: 3              # giữ 3 checkpoint gần nhất, tự xóa cũ (~21GB max)
   dataloader:
     batch_size: 22
     num_workers: 4
