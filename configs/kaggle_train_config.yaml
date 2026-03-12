@@ -3,9 +3,9 @@ training:
   weight_decay: 0.01
   precision: 16-mixed  # P100 chỉ hỗ trợ FP16, KHÔNG hỗ trợ bf16
   strategy: auto
-  training_steps: 100  # survey reproduction (ước tính ~2-3 giờ trên P100)
+  training_steps: 5  # survey reproduction (ước tính ~2-3 giờ trên P100)
   ckpt_dir: /kaggle/working/ckpt/trained
-  accumulate_grad_batches: 12  # effective batch = 2 * 12 = 24 (gần bằng batch 22 gốc)
+  accumulate_grad_batches: 11  # effective batch = 2 * 12 = 24 (gần bằng batch 22 gốc)
   dataloader:
     batch_size: 2  # P100 16GB VRAM (giảm xuống 2 để tránh OOM)
     num_workers: 2  # Kaggle có ít CPU cores
@@ -15,13 +15,13 @@ training:
 logger:
   target: utils.CustomLogger
   params:
-    log_frequency: 25  # checkpoint thường xuyên hơn (phòng session ngắt)
-    n_examples: 2
+    log_frequency: 1  # checkpoint thường xuyên hơn (phòng session ngắt)
+    n_examples: 1
     unconditional_guidance_scale: 7.5
     sample: True
     use_ddim: True
-    ddim_steps: 20
-    ddim_intermediates: 5
+    ddim_steps: 1
+    ddim_intermediates: 0
     ddim_eta: 0.0
     plot_denoise_rows: False
     plot_diffusion_rows: False
