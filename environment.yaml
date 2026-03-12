@@ -1,19 +1,22 @@
 name: artgen
 channels:
-  - conda-forge
-  - defaults
+  - conda-forge  # chỉ dùng conda-forge, tránh ToS prompt của defaults/pkgs/main
 dependencies:
-  - python=3.11
+  - python=3.11  # PyTorch 2.8.0 yêu cầu Python >=3.11 (không hỗ trợ 3.10)
   - pip
 
-  # === Các package hệ thống ===
+  # === Các package hệ thống (từ conda-forge) ===
   - numpy
   - pillow
   - tqdm
 
   # === Pip packages ===
   - pip:
-      # PyTorch + CUDA 12.8 (cài qua pip để tránh xung đột conda)
+      # setuptools <71: pytorch-lightning 2.1.4 dùng pkg_resources (bị bỏ từ setuptools 71+)
+      - setuptools<71
+
+      # PyTorch + CUDA 12.8 — cài qua pip để tránh xung đột conda solver
+      # Nếu cu128 chưa có wheel, thử đổi thành cu126 (driver 12.8 tương thích ngược)
       - --extra-index-url https://download.pytorch.org/whl/cu128
       - torch==2.8.0
       - torchvision==0.23.0
@@ -27,11 +30,12 @@ dependencies:
       - transformers>=4.36.0
       - datasets>=2.16.0
       - safetensors>=0.4.0
+      - accelerate>=0.25.0  # bắt buộc cho transformers device_map
 
       # Diffusion & text encoders
       - diffusers>=0.25.0
       - open-clip-torch>=2.24.0
-      - sentencepiece # T5 tokenizer dependency
+      - sentencepiece  # T5 tokenizer dependency
 
       # Config & logging
       - omegaconf>=2.3.0
@@ -43,8 +47,9 @@ dependencies:
       # Inference UI
       - streamlit>=1.30.0
 
-      # Memory-efficient attention (highly recommended for RTX 5090)
-      - xformers>=0.0.30
+      # xformers: phải khớp ABI với PyTorch build — thử cài sau khi env tạo xong:
+      #   pip install xformers --extra-index-url https://download.pytorch.org/whl/cu128
+      # Nếu không có wheel tương thích, PyTorch 2.8 SDPA built-in đủ thay thế.
 
       # Font for log_txt_as_img visualization
       - fonttools

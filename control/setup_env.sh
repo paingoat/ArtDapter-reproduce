@@ -40,11 +40,14 @@ echo ""
 echo "[3/4] Tạo conda environment 'artgen'..."
 ENV_YAML="$PROJECT_DIR/environment.yaml"
 
+# Tự động accept ToS để không bị block trong môi trường non-interactive
+conda config --set auto_accept_tos yes 2>/dev/null || true
+
 if conda env list | grep -q "^artgen "; then
     echo "Environment 'artgen' đã tồn tại. Bỏ qua."
-    echo "  (Muốn tạo lại: conda env remove -n artgen && bash $0)"
+    echo "  (Muốn tạo lại: conda env remove -n artgen --yes && bash $0)"
 else
-    conda env create -f "$ENV_YAML"
+    conda env create -f "$ENV_YAML" --yes
     echo "Environment 'artgen' đã tạo xong."
 fi
 
