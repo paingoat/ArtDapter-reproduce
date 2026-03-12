@@ -1,18 +1,10 @@
 name: artgen
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
   - defaults
 dependencies:
-  - python=3.10
+  - python=3.11
   - pip
-
-  # === PyTorch + CUDA (RTX 5090 → CUDA 12.8.1, RunPod template torch280) ===
-  - pytorch=2.8.0
-  - torchvision=0.22.0
-  - torchaudio=2.8.0
-  - pytorch-cuda=12.8
 
   # === Các package hệ thống ===
   - numpy
@@ -21,6 +13,12 @@ dependencies:
 
   # === Pip packages ===
   - pip:
+      # PyTorch + CUDA 12.8 (cài qua pip để tránh xung đột conda)
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - torch==2.8.0
+      - torchvision==0.23.0
+      - torchaudio==2.8.0
+
       # Core training framework
       - pytorch-lightning==2.1.4
       - lightning==2.1.4
@@ -46,7 +44,7 @@ dependencies:
       - streamlit>=1.30.0
 
       # Memory-efficient attention (highly recommended for RTX 5090)
-      - xformers>=0.0.30 # match PyTorch 2.8.0 + CUDA 12.8
+      - xformers>=0.0.30
 
       # Font for log_txt_as_img visualization
       - fonttools

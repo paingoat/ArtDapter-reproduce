@@ -3,7 +3,7 @@ training:
   weight_decay: 0.01
   precision: bf16-mixed # RTX 5090 hỗ trợ bf16 — nhanh hơn fp16
   strategy: auto
-  training_steps: 1000
+  training_steps: 5000
   ckpt_dir: ./ckpt/trained
   save_top_k: 3 # giữ 3 checkpoint gần nhất, tự xóa cũ
   accumulate_grad_batches: 2 # effective batch = 11 * 2 = 22 (giống config gốc)
@@ -16,7 +16,7 @@ training:
 logger:
   target: utils.CustomLogger
   params:
-    log_frequency: 200 # log mỗi 200 step (5 lần trong 1000 steps)
+    log_frequency: 500 # log mỗi 500 step (10 lần trong 5000 steps)
     n_examples: 2
     unconditional_guidance_scale: 7.5
     sample: True
