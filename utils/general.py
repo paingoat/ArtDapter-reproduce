@@ -87,7 +87,7 @@ def wandb_htmltable(data, columns, css=''):
 		if type(content) == dict:
 			html_content = content['content']
 			inline_style = content.get('style', inline_style)
-		if Image.isImageType(html_content):	# if PIL image
+		if isinstance(html_content, Image.Image):	# if PIL image
 			html_content = format_image(html_content, inline_style)
 		return f'<{tag} style="{inline_style}">{html_content}</{tag}>'
 	def format_image(pil_image, inline_style):
