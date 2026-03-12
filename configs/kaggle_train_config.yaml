@@ -15,7 +15,7 @@ training:
 logger:
   target: utils.CustomLogger
   params:
-    log_frequency: 1  # checkpoint thường xuyên hơn (phòng session ngắt)
+    log_frequency: 5  # checkpoint thường xuyên hơn (phòng session ngắt)
     n_examples: 1
     unconditional_guidance_scale: 7.5
     sample: True
