@@ -40,8 +40,16 @@ echo ""
 echo "[3/4] Tạo conda environment 'artgen'..."
 ENV_YAML="$PROJECT_DIR/environment.yaml"
 
-# Tự động accept ToS để không bị block trong môi trường non-interactive
-conda config --set auto_accept_tos yes 2>/dev/null || true
+# Yêu cầu người dùng xác nhận Điều khoản dịch vụ (ToS) của Anaconda
+echo "Cảnh báo: Miniconda yêu cầu bạn đồng ý với Điều khoản dịch vụ (ToS) để tải các gói từ kênh mặc định."
+read -p "Bạn có muốn tiếp tục và đồng ý với ToS không? (y/n): " confirm
+if [[ "$confirm" != [yY] && "$confirm" != [yY][eE][sS] ]]; then
+    echo "Bạn đã chọn không đồng ý. Hủy cài đặt môi trường."
+    exit 1
+fi
+echo "Đang tự động xác nhận ToS..."
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main > /dev/null 2>&1 || true
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r > /dev/null 2>&1 || true
 
 if conda env list | grep -q "^artgen "; then
     echo "Environment 'artgen' đã tồn tại. Bỏ qua."
