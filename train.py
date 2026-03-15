@@ -66,6 +66,7 @@ def main():
 				filename =						str(wandb_logger.experiment.name) + '-{epoch}-{step}',
 				every_n_train_steps =	config.logger.params.log_frequency,
 				save_top_k =					config.training.get('save_top_k', -1),
+				save_last =						config.training.get('save_last', False),
 				monitor =							'train/loss',
 				mode =								'min',
 			),

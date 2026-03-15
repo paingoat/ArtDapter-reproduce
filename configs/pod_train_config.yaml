@@ -5,7 +5,8 @@ training:
   strategy: auto
   training_steps: 5000
   ckpt_dir: ./ckpt/trained
-  save_top_k: 3 # giữ 3 checkpoint gần nhất, tự xóa cũ
+  save_top_k: 1 # giữ 1 checkpoint có train/loss bé nhất ("best")
+  save_last: true
   accumulate_grad_batches: 2 # effective batch = 11 * 2 = 22 (giống config gốc)
   dataloader:
     batch_size: 11 # RTX 5090 32GB VRAM — thoải mái hơn P100
