@@ -15,8 +15,9 @@ ArtDapter là project fine-tune/generate ảnh theo prompt + Art Style + Princip
 ## Tổng quan pipeline
 
 1. **Chuẩn bị weights**: `prepare_weights.py` gộp SD v1.5 + ELLA thành `ckpt/init/init.ckpt`
-2. **Train**: `train.py` (PyTorch Lightning + WandB)
-3. **Inference UI**: `inference/app.py` (Streamlit)
+2. **Tải dataset**: `download_dataset.sh` tải tập CompArt thông qua thư viện HF datasets.
+3. **Train**: `train.py` (PyTorch Lightning + WandB)
+4. **Inference UI**: `inference/app.py` (Streamlit)
 
 Dataset chính: CompArt (qua HuggingFace dataset path trong config).
 
@@ -54,6 +55,7 @@ bash control/prepare_weights.sh
 ### 3) Sanity check trước khi train
 
 ```bash
+bash control/download_dataset.sh
 bash control/sanity_check.sh
 ```
 

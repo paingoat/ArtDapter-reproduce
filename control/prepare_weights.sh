@@ -43,4 +43,4 @@ fi
 
 echo ""
 echo "Bước tiếp theo:"
-echo "  bash control/sanity_check.sh"
+echo "  bash control/download_dataset.sh"

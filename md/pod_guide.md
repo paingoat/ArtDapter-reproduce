@@ -11,14 +11,15 @@
 1. [Chuẩn bị Pod](#1-chuẩn-bị-pod)
 2. [Cài đặt môi trường](#2-cài-đặt-môi-trường)
 3. [Tải & Gộp weights](#3-tải--gộp-weights)
-4. [Sanity Check](#4-sanity-check)
-5. [Training](#5-training)
-6. [Inference (Streamlit)](#6-inference-streamlit)
-7. [Evaluation](#7-evaluation)
-8. [tmux — Chạy nền an toàn](#8-tmux--chạy-nền-an-toàn)
-9. [Quản lý dung lượng](#9-quản-lý-dung-lượng)
-10. [Cheatsheet](#10-cheatsheet)
-11. [Troubleshooting](#11-troubleshooting)
+4. [Tải dataset](#4-tải-dataset)
+5. [Sanity Check](#5-sanity-check)
+6. [Training](#6-training)
+7. [Inference (Streamlit)](#7-inference-streamlit)
+8. [Evaluation](#8-evaluation)
+9. [tmux — Chạy nền an toàn](#9-tmux--chạy-nền-an-toàn)
+10. [Quản lý dung lượng](#10-quản-lý-dung-lượng)
+11. [Cheatsheet](#11-cheatsheet)
+12. [Troubleshooting](#12-troubleshooting)
 
 ---
 
@@ -135,7 +136,20 @@ ls -lh ckpt/init/
 
 ---
 
-## 4. Sanity Check
+## 4. Tải dataset
+
+Trước khi kiểm tra và huấn luyện, cần tải sẵn dataset về cache cục bộ để quá trình đọc mượt mà.
+
+```bash
+conda activate artgen
+bash control/download_dataset.sh
+```
+
+Quá trình này sẽ gọi thư viện HuggingFace `datasets` để kéo thư mục `thejinzhe/CompArt` về `HF_DATASETS_CACHE`. Thông thường tốn vài GB tùy split.
+
+---
+
+## 5. Sanity Check
 
 Kiểm tra toàn bộ pipeline trước khi train (~2 phút).
 
@@ -144,39 +158,33 @@ conda activate artgen
 bash control/sanity_check.sh
 ```
 
-Script chạy 6 bước:
-1. **Import modules** — tất cả dependencies + project modules + xformers
+Script chạy 5 bước:
+1. **Import modules** — tất cả dependencies + project modules
 2. **GPU & CUDA** — CUDA available, bf16 support
 3. **Config** — load & validate `pod_train_config.yaml`, in effective batch size
 4. **Weights** — `init.ckpt` tồn tại & kích thước hợp lý
 5. **Dataset** — load 1 batch từ CompArt qua HuggingFace
-6. **Forward + Backward** — 1 training step, báo loss + peak VRAM
 
 Kết quả mong đợi:
 ```
   [PASS] Core dependencies
   [PASS] Project modules
-  [PASS] xformers (optional)
   [PASS] CUDA available
-         GPU: NVIDIA GeForce RTX 5090 | VRAM: 32.0 GB | CUDA: 12.8
   [PASS] bf16 support
   [PASS] Load config: configs/pod_train_config.yaml
          Effective batch size: 11 x 2 = 22
          Precision: bf16-mixed | Steps: 5000
   [PASS] init.ckpt exists
   [PASS] Dataset load
-  [PASS] Forward + backward pass
-         Loss: x.xxxx
-         Peak VRAM (batch=1): ~xx.xx GB
 
-  Result: 10 passed, 0 failed
+  Result: 8 passed, 0 failed
 ```
 
-> Lần đầu chạy dataset sẽ tải CompArt từ HuggingFace (~vài GB).
+> **Mật khẩu/Token HuggingFace**: Do dataset CompArt là public, tập lệnh `download_dataset.sh` sẽ tự động tải mà không cần login. Nhớ theo dõi terminal để nhận biết tiến trình hoàn thành.
 
 ---
 
-## 5. Training
+## 6. Training
 
 > **Khuyến nghị QUAN TRỌNG**: Nên chạy training trong **tmux** để tránh mất progress nếu mất mạng hoặc máy tính tắt ngẫu nhiên. Xem hướng dẫn mở tmux tại [mục 8. tmux — Chạy nền an toàn](#8-tmux--chạy-nền-an-toàn).
 > (Dưới đây là các lệnh chạy khi bạn đã trong session tmux)
@@ -236,7 +244,7 @@ ls -lhtr ckpt/trained/*.ckpt
 
 ---
 
-## 6. Inference (Streamlit)
+## 7. Inference (Streamlit)
 
 ### Chạy inference app
 
@@ -262,7 +270,7 @@ bash control/inference.sh --ckpt ckpt/trained/step=5000-loss=0.03.ckpt
 
 ---
 
-## 7. Evaluation
+## 8. Evaluation
 
 > **Lưu ý**: `/workspace` là vị trí lưu dữ liệu trên RunPod, tương ứng với thư mục lưu dữ liệu trên máy thật.
 
@@ -280,7 +288,7 @@ PYTHONPATH=. python eval.py \
 
 ---
 
-## 8. tmux — Chạy nền an toàn
+## 9. tmux — Chạy nền an toàn
 
 tmux giúp giữ process chạy kể cả khi SSH bị ngắt.
 
@@ -327,7 +335,7 @@ tmux attach -t monitor
 
 ---
 
-## 9. Quản lý dung lượng
+## 10. Quản lý dung lượng
 
 ### Ước tính dung lượng
 
@@ -384,7 +392,7 @@ conda clean --all -y
 
 ---
 
-## 10. Cheatsheet
+## 11. Cheatsheet
 
 ### Monitoring
 
@@ -426,6 +434,7 @@ bash control/setup_env.sh            # 1 lần
 conda activate artgen
 bash control/download_weights.sh     # 1 lần
 bash control/prepare_weights.sh      # 1 lần
+bash control/download_dataset.sh     # 1 lần (tải về disk cache)
 bash control/sanity_check.sh         # kiểm tra
 bash control/train.sh                # train
 bash control/inference.sh            # inference
@@ -459,7 +468,7 @@ pkill -f "python train.py"
 
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 ### `CUDA out of memory`
 
@@ -479,9 +488,9 @@ pkill -f "python train.py"
 export HF_ENDPOINT="https://hf-mirror.com"
 ```
 
-### SSH bị ngắt giữa chừ
+### SSH bị ngắt giữa chừng
 
-- Dùng tmux (mục 8). Training vẫn chạy nền.
+- Dùng tmux (mục 9). Training vẫn chạy nền.
 - Quay lại: `tmux attach -t train`
 
 ### WandB không log
@@ -512,8 +521,9 @@ export HF_ENDPOINT="https://hf-mirror.com"
 │  1. setup_env.sh        → Conda env + font       │
 │  2. download_weights.sh → SD v1.5 + ELLA         │
 │  3. prepare_weights.sh  → init.ckpt              │
-│  4. sanity_check.sh     → Verify toàn bộ         │
-│  5. train.sh            → Training (WandB log)    │
-│  6. inference.sh        → Streamlit app           │
+│  4. download_dataset.sh → HF CompArt dataset     │
+│  5. sanity_check.sh     → Verify toàn bộ         │
+│  6. train.sh            → Training (WandB log)    │
+│  7. inference.sh        → Streamlit app           │
 └──────────────────────────────────────────────────┘
 ```
