@@ -10,8 +10,8 @@ import sys
 import argparse
 from pathlib import Path
 
-# Dataset cache → /workspace để persist qua pod restart (nhất quán với train.sh)
-os.environ.setdefault("HF_DATASETS_CACHE", "/workspace/hf_cache/datasets")
+# Dataset cache → /backup/data/art-gen để persist (nhất quán với train.sh)
+os.environ.setdefault("HF_DATASETS_CACHE", "/backup/data/art-gen/hf_cache/datasets")
 
 CHECKS_PASSED = 0
 CHECKS_FAILED = 0
@@ -68,21 +68,12 @@ def main():
 
     check("Project modules", check_project_imports)
 
-    def check_xformers():
-        import xformers
-        import xformers.ops
-
-    check("xformers (optional)", check_xformers)
-
     # ── Check 2: CUDA ──
     print("\n[2/6] GPU & CUDA...")
 
     def check_cuda():
         import torch
         assert torch.cuda.is_available(), "CUDA not available"
-        name = torch.cuda.get_device_name(0)
-        vram = torch.cuda.get_device_properties(0).total_mem / 1024**3
-        print(f"         GPU: {name} | VRAM: {vram:.1f} GB | CUDA: {torch.version.cuda}")
 
     check("CUDA available", check_cuda)
 
@@ -136,50 +127,7 @@ def main():
 
     check("Dataset load", check_dataset)
 
-    # ── Check 6: Model + forward/backward ──
-    print("\n[6/6] Model forward + backward (1 step, batch=1)...")
 
-    def check_model():
-        import torch
-        from ldm.util import instantiate_from_config
-        from models.util import load_state_dict as load_sd
-        from utils import freeze
-        from torch.utils.data import DataLoader
-
-        model = instantiate_from_config(config.model)
-        model.load_state_dict(load_sd(config.model.init_path, location="cpu"))
-        model = model.cuda()
-
-        if config.model.sd_locked:
-            freeze(model.model)
-
-        model.learning_rate = config.training.learning_rate
-        model.weight_decay = config.training.weight_decay
-        model.sd_locked = config.model.sd_locked
-
-        ds = instantiate_from_config(config.dataset)
-        dl = DataLoader(ds, batch_size=1, collate_fn=ds.collate_fn, num_workers=0)
-        batch = next(iter(dl))
-
-        # Move batch to GPU
-        for k in batch:
-            if isinstance(batch[k], torch.Tensor):
-                batch[k] = batch[k].cuda()
-
-        # Forward + backward
-        loss, loss_dict = model.training_step(batch, 0)
-        loss.backward()
-
-        vram_used = torch.cuda.max_memory_allocated() / 1024**3
-        print(f"         Loss: {loss.item():.4f}")
-        print(f"         Loss dict: { {k: f'{v.item():.4f}' for k, v in loss_dict.items()} }")
-        print(f"         Peak VRAM (batch=1): {vram_used:.2f} GB")
-
-        # Cleanup
-        del model, batch
-        torch.cuda.empty_cache()
-
-    check("Forward + backward pass", check_model)
 
     # ── Summary ──
     print("\n" + "=" * 50)

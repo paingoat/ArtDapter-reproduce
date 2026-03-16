@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG="configs/pod_train_config.yaml"
 CKPT_DIR="$PROJECT_DIR/ckpt/trained"
-WANDB_CACHE="/tmp/wandb"
+WANDB_CACHE="/backup/data/art-gen/wandb"
 
 cd "$PROJECT_DIR"
 
@@ -56,11 +56,11 @@ if [ ! -f "$INIT_CKPT" ]; then
 fi
 
 # --- Thiết lập HuggingFace cache ---
-# Dataset cache → /workspace để persist qua pod restart (tránh tải lại ~5GB)
-export HF_DATASETS_CACHE="/workspace/hf_cache/datasets"
-# Model/tokenizer cache → /tmp (tái tạo nhanh, tiết kiệm disk /workspace)
-export HF_HOME="/tmp/hf_cache"
-export TRANSFORMERS_CACHE="/tmp/hf_cache/transformers"
+# Dataset cache → persist (tránh tải lại ~5GB)
+export HF_DATASETS_CACHE="/backup/data/art-gen/hf_cache/datasets"
+# Model/tokenizer cache
+export HF_HOME="/backup/data/art-gen/hf_cache"
+export TRANSFORMERS_CACHE="/backup/data/art-gen/hf_cache/transformers"
 
 mkdir -p "$WANDB_CACHE"
 

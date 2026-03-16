@@ -39,6 +39,8 @@ ssh root@<pod-ip> -p <port> -i ~/.ssh/your_key
 
 ### 1.3 Clone repo
 
+> **Lưu ý**: `/workspace` là vị trí lưu dữ liệu trên RunPod, tương ứng với thư mục lưu dữ liệu trên máy thật.
+
 ```bash
 cd /workspace
 git clone <your-repo-url> ArtDapter
@@ -176,9 +178,13 @@ Kết quả mong đợi:
 
 ## 5. Training
 
+> **Khuyến nghị QUAN TRỌNG**: Nên chạy training trong **tmux** để tránh mất progress nếu mất mạng hoặc máy tính tắt ngẫu nhiên. Xem hướng dẫn mở tmux tại [mục 8. tmux — Chạy nền an toàn](#8-tmux--chạy-nền-an-toàn).
+> (Dưới đây là các lệnh chạy khi bạn đã trong session tmux)
+
 ### Chạy training
 
 ```bash
+# Trong môi trường tmux
 conda activate artgen
 
 # Train từ đầu
@@ -225,7 +231,8 @@ ls -lhtr ckpt/trained/*.ckpt
 
 ### Train trong tmux (khuyến nghị)
 
-Xem [mục 8](#8-tmux--chạy-nền-an-toàn) để chạy training an toàn trong tmux, tránh mất progress khi SSH bị ngắt.
+> Như đã nhắc ở đầu phần 5, việc train bằng `tmux` sẽ giúp tiến trình chạy nền không bị ngắt.
+> Chi tiết lệnh tmux xem [mục 8. tmux — Chạy nền an toàn](#8-tmux--chạy-nền-an-toàn).
 
 ---
 
@@ -256,6 +263,8 @@ bash control/inference.sh --ckpt ckpt/trained/step=5000-loss=0.03.ckpt
 ---
 
 ## 7. Evaluation
+
+> **Lưu ý**: `/workspace` là vị trí lưu dữ liệu trên RunPod, tương ứng với thư mục lưu dữ liệu trên máy thật.
 
 ```bash
 conda activate artgen
@@ -357,6 +366,8 @@ rm -rf /tmp/wandb/wandb/
 ```
 
 ### Dọn dẹp nhanh
+
+> **Lưu ý**: `/workspace` là vị trí lưu dữ liệu trên RunPod, tương ứng với thư mục lưu dữ liệu trên máy thật.
 
 ```bash
 # Xem dung lượng tổng quan
