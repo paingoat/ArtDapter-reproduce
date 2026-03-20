@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from random import randint
+from random import choice
 from contextlib import contextmanager
 
 CUR_DIR = Path(os.path.dirname(os.path.realpath(__file__)))
@@ -88,7 +88,11 @@ def load_CSS():
 
 
 def init_art_controls(reinit=False):
-	example = st.session_state.cond_examples[randint(0,len(st.session_state.cond_examples))]
+	cond_examples = st.session_state.cond_examples
+	if not cond_examples:
+		cond_examples = DEFAULT_COND_EXAMPLES
+		st.session_state.cond_examples = cond_examples
+	example = choice(cond_examples)
 	if reinit or 'prompt_value' not in st.session_state:
 		st.session_state['prompt_value'] = example['caption']
 	if reinit or 'art_controls_art_style' not in st.session_state:
