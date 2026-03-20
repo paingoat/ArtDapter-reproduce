@@ -111,6 +111,7 @@ Nếu bạn chạy trong notebook environment (Kaggle), **không dùng luồng P
 
 - Các script trong `control/` là bash script, phù hợp Linux/WSL2/RunPod.
 - `control/inference.sh` sẽ cập nhật tạm `configs/inference_config.yaml` theo checkpoint bạn chọn, rồi restore khi app dừng.
+- `inference/app.py` dùng bộ ví dụ prompt cục bộ, không khởi tạo dataset CompArt khi mở app.
 - Không thấy `eval.py` trong repo hiện tại, nên luồng mặc định tập trung vào **train + streamlit inference**.
 
 ---

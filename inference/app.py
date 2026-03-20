@@ -11,10 +11,46 @@ import streamlit as st
 from omegaconf import OmegaConf
 from pytorch_lightning import Trainer, seed_everything
 
-from dataset import CompArt
 from ldm.util import instantiate_from_config
 from utils import load_weights, resolve_device
 from ldm.models.diffusion.custom_ddim import CustomDDIMSampler
+
+POA_PRINCIPLES = ['balance', 'harmony', 'variety', 'unity', 'contrast', 'emphasis', 'proportion', 'movement', 'rhythm', 'pattern']
+
+DEFAULT_COND_EXAMPLES = [
+	{
+		'caption': 'A futuristic city skyline at sunset with neon reflections on wet streets.',
+		'art_style': 'Expressionism',
+		'PoA': [
+			'Asymmetric skyline masses are balanced by bright reflections in the foreground.',
+			'Neon palette and repeating glow unify the whole composition.',
+			'Contrasting light sources and architecture create visual variety.',
+			'Consistent perspective and color grading keep all elements coherent.',
+			'Warm sunset tones contrast against cool neon blues and violets.',
+			'Central boulevard and brightest signage draw immediate focus.',
+			'Scale differences between towers, vehicles, and people feel intentional.',
+			'Leading road lines guide the eye deep into the scene.',
+			'Repeating windows and lights establish a steady visual rhythm.',
+			'Facade grids and reflections form layered geometric patterns.'
+		]
+	},
+	{
+		'caption': 'A calm mountain lake surrounded by pine trees under morning mist.',
+		'art_style': 'Impressionism',
+		'PoA': [
+			'The shoreline and mirrored mountains create stable visual balance.',
+			'Soft brushwork and close tonal families build harmony.',
+			'Mist, trees, and ripples add subtle variety without clutter.',
+			'Foreground, middle ground, and background connect into one scene.',
+			'Light mist and darker pines provide gentle tonal contrast.',
+			'The brightest mist patch near the center acts as focal emphasis.',
+			'Natural relative sizes of trees and peaks preserve believable proportion.',
+			'Ripple directions and slanted branches suggest quiet movement.',
+			'Repeated tree silhouettes and water ripples establish rhythm.',
+			'Cloud textures and pine clusters create organic pattern repetition.'
+		]
+	}
+]
 
 @contextmanager
 def st_horizontal(container):
@@ -42,7 +78,7 @@ def load_inference_config():
 
 def load_cond_examples():
 	if 'cond_examples' not in st.session_state:
-		st.session_state.cond_examples = instantiate_from_config(st.session_state.config.dataset)
+		st.session_state.cond_examples = DEFAULT_COND_EXAMPLES
 
 
 def load_CSS():
@@ -57,7 +93,7 @@ def init_art_controls(reinit=False):
 		st.session_state['prompt_value'] = example['caption']
 	if reinit or 'art_controls_art_style' not in st.session_state:
 		st.session_state['art_controls_art_style'] = example['art_style']
-	for i,principle in enumerate(CompArt.PoA_PRINCIPLES):
+	for i,principle in enumerate(POA_PRINCIPLES):
 		if reinit or f'art_controls_PoA_{principle}' not in st.session_state:
 			st.session_state[f'art_controls_PoA_{principle}'] = example['PoA'][i]
 

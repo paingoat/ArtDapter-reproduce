@@ -14,6 +14,13 @@ CKPT_DIR="$PROJECT_DIR/ckpt/trained"
 
 cd "$PROJECT_DIR"
 
+# --- Thiết lập HuggingFace cache đồng nhất với train/download scripts ---
+if [ -d "/backup/data/art-gen" ]; then
+    export HF_HOME="${HF_HOME:-/backup/data/art-gen/hf_cache}"
+    export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
+    export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME/transformers}"
+fi
+
 # --- Parse arguments ---
 CKPT_PATH=""
 if [ "${1:-}" = "--ckpt" ] && [ -n "${2:-}" ]; then
@@ -54,12 +61,12 @@ sed -i "s|init_path:.*|init_path: $CKPT_PATH|" "$ORIG_CONFIG"
 
 echo "Đã cập nhật $ORIG_CONFIG với checkpoint: $CKPT_PATH"
 echo "Khởi động Streamlit..."
-echo "  → Mở browser tại http://localhost:8501"
+echo "  → Mở browser tại http://localhost:8502"
 echo "  → Ctrl+C để dừng"
 echo ""
 
 # --- Chạy Streamlit ---
-PYTHONPATH=. streamlit run inference/app.py --server.port 8501 --server.address 0.0.0.0
+PYTHONPATH=. streamlit run inference/app.py --server.port 8502 --server.address 0.0.0.0
 
 # --- Restore config gốc ---
 if [ -f "$BACKUP" ]; then

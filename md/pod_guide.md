@@ -30,7 +30,7 @@
 - Chọn GPU: **RTX 5090** (32 GB)
 - Template: `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`
 - Disk: ≥ **50 GB** (container volume), ≥ **20 GB** (pod volume nếu cần persist)
-- Expose port **8501** nếu muốn dùng Streamlit inference qua web
+- Expose port **8502** nếu muốn dùng Streamlit inference qua web
 
 ### 1.2 Kết nối SSH
 
@@ -260,13 +260,13 @@ bash control/inference.sh --ckpt ckpt/trained/step=5000-loss=0.03.ckpt
 
 ### Truy cập giao diện
 
-- **Local**: http://localhost:8501
-- **RunPod**: Dùng port forwarding SSH hoặc expose port 8501 khi tạo pod:
+- **Local**: http://localhost:8502
+- **RunPod**: Dùng port forwarding SSH hoặc expose port 8502 khi tạo pod:
   ```bash
-  ssh -L 8501:localhost:8501 root@<pod-ip> -p <port>
-  ssh -L 8501:localhost:8501 root@82.221.170.234 -p 23863
+  ssh -L 8502:localhost:8502 root@<pod-ip> -p <port>
+  ssh -L 8502:localhost:8502 root@82.221.170.234 -p 23863
   ```
-  Mở http://localhost:8501 trên máy local.
+  Mở http://localhost:8502 trên máy local.
 
 ---
 
