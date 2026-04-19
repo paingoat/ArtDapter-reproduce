@@ -398,12 +398,12 @@ def render_ctf_debug_panel(container):
 			stage_cols = st.columns(3)
 			
 			with stage_cols[0]:
-				st.markdown('**Stage 1: Structure (α = 0)**')
+				st.markdown('**Stage 1: Structure (Pencil Sketch, α = 0)**')
 				for img in st.session_state['ctf_stage1_outputs']:
 					st.image(img, use_container_width=True)
 			
 			with stage_cols[1]:
-				st.markdown('**Stage 2: Mid-Style (α = 0.5)**')
+				st.markdown('**Stage 2: Mid-Style (Underpainting, α = 0.5)**')
 				for img in st.session_state['ctf_stage2_outputs']:
 					st.image(img, use_container_width=True)
 					
