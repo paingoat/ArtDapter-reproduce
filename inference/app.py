@@ -233,11 +233,15 @@ def render_sampling_options(container):
 	if sampling_options['strategy'] == 'ddim':
 		sampling_options['ddim_eta'] = col3.number_input("η (DDIM)", value=0.)
 
-	# CTF controls
-	sampling_options['style_start'] = col3.slider('Style Start', value=0.7, min_value=0.0, max_value=1.0, step=0.05,
-													 help='Fraction of steps before style injection begins (CTF mode only)')
-	sampling_options['show_phase'] = col3.checkbox('🔍 Show Phase Analysis', value=True,
-													 help='Generate additional structure-only image (no style) for comparison. ~7s extra.')
+	# CTF controls (Only visible in CTF mode)
+	if st.session_state.get('config_mode') == 'ctf':
+		sampling_options['style_start'] = col3.slider('Style Start', value=0.7, min_value=0.0, max_value=1.0, step=0.05,
+														 help='Fraction of steps before style injection begins')
+		sampling_options['show_phase'] = col3.checkbox('🔍 Show Phase Analysis', value=True,
+														 help='Generate additional structure-only image (no style) for comparison. ~7s extra.')
+	else:
+		sampling_options['style_start'] = 0.7
+		sampling_options['show_phase'] = False
 
 	return sampling_options
 
