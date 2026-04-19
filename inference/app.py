@@ -70,7 +70,8 @@ def is_diff_model():
 	return ('model' not in st.session_state) or \
 		not check_state('model_options_checkpoint',	model_options['checkpoint']) or \
 		not check_state('model_options_device',			model_options['device']) or \
-		not check_state('model_options_precision',	model_options['precision'])
+		not check_state('model_options_precision',	model_options['precision']) or \
+        not check_state('model_options_config',     st.session_state.config.model)
 
 
 def load_inference_config():
