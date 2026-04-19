@@ -238,11 +238,11 @@ def render_sampling_options(container):
 	if st.session_state.get('config_mode') == 'ctf':
 		sampling_options['style_start'] = col3.slider('Style Start', value=0.7, min_value=0.0, max_value=1.0, step=0.05,
 														 help='Fraction of steps before style injection begins')
-		sampling_options['show_phase'] = col3.checkbox('🔍 Show Phase Analysis', value=True,
-														 help='Generate additional structure-only image (no style) for comparison. ~7s extra.')
+		sampling_options['show_stages'] = col3.checkbox('🔍 Show 3-Stage Progression', value=True,
+														 help='Extract and display intermediate layout and style blending stages from the generation loop.')
 	else:
 		sampling_options['style_start'] = 0.7
-		sampling_options['show_phase'] = False
+		sampling_options['show_stages'] = False
 
 	return sampling_options
 
@@ -280,7 +280,7 @@ def generate():
 	ddim_eta = sampling_options.get('ddim_eta', 0.0)
 	cfg_scale = sampling_options['CFG_scale']
 	style_start = sampling_options.get('style_start', 0.7)
-	show_phase = sampling_options.get('show_phase', True)
+	show_stages = sampling_options.get('show_stages', True)
 
 	# Check if model is CTF-capable
 	is_ctf = hasattr(model, 'get_ctf_conditioning')
@@ -302,6 +302,21 @@ def generate():
 				st.session_state['ctf_prompts'] = model._last_decomposed
 
 		ctf_sampler = CTFDDIMSampler(model)
+
+		intermediate_latents = {}
+		if show_stages:
+			# Calculate exact step indices based on progress (0 to S-1)
+			start_step_idx = int(sampling_steps * style_start)
+			mid_step_idx = int(sampling_steps * (1.0 + style_start) / 2)
+
+			def img_callback(pred_x0, i):
+				if i == start_step_idx:
+					intermediate_latents['stage1'] = pred_x0.clone()
+				elif i == mid_step_idx:
+					intermediate_latents['stage2'] = pred_x0.clone()
+		else:
+			img_callback = None
+
 		sample_kwargs = dict(
 			S=sampling_steps,
 			batch_size=sample_quantity,
@@ -311,24 +326,25 @@ def generate():
 			unconditional_conditioning=un_cond,
 			eta=ddim_eta,
 			verbose=False,
+			img_callback=img_callback
 		)
 
-		# Step 2: Phase 1 — Structure only (alpha=0 throughout)
-		if show_phase:
-			with status_placeholder, st.spinner('📐 Phase 1 — Structure sampling (no style)...'):
-				z_phase1, _ = ctf_sampler.sample(**sample_kwargs, style_start=1.1)
-				st.session_state['ctf_phase1_outputs'] = decode_to_numpy(z_phase1, model)
-		else:
-			st.session_state.pop('ctf_phase1_outputs', None)
-
-		# Step 3: Phase 2 — Full CTF (style blended from style_start)
-		with status_placeholder, st.spinner('🎨 Phase 2 — CTF sampling with style...'):
+		# Perform entire CTF sampling in one go
+		with status_placeholder, st.spinner('🎨 CTF sampling...'):
 			artdapted_z_samples, _ = ctf_sampler.sample(**sample_kwargs, style_start=style_start)
+
+		if show_stages and 'stage1' in intermediate_latents and 'stage2' in intermediate_latents:
+			st.session_state['ctf_stage1_outputs'] = decode_to_numpy(intermediate_latents['stage1'], model)
+			st.session_state['ctf_stage2_outputs'] = decode_to_numpy(intermediate_latents['stage2'], model)
+		else:
+			st.session_state.pop('ctf_stage1_outputs', None)
+			st.session_state.pop('ctf_stage2_outputs', None)
 
 	else:
 		# ── Original Pipeline (backward compatible) ────────────
 		st.session_state.pop('ctf_prompts', None)
-		st.session_state.pop('ctf_phase1_outputs', None)
+		st.session_state.pop('ctf_stage1_outputs', None)
+		st.session_state.pop('ctf_stage2_outputs', None)
 
 		caption = model.apply_prompt_template([prompt]* sample_quantity, [art_style]* sample_quantity, [PoA]* sample_quantity)
 		cond = dict(c_crossattn =	[model.get_learned_conditioning(caption)] )
@@ -360,7 +376,7 @@ def generate():
 
 
 def render_ctf_debug_panel(container):
-	"""Display CTF Phase Analysis: GPT decomposition + Phase 1 vs Phase 2 images."""
+	"""Display CTF Phase Analysis: GPT decomposition and 3-Stage image progression."""
 	if 'ctf_prompts' not in st.session_state:
 		return
 
@@ -373,21 +389,28 @@ def render_ctf_debug_panel(container):
 		c2.success(f"**P2 — Content:**\n\n{p.get('prompt2', '')}")
 		c3.warning(f"**P3 — Full + Style:**\n\n{p.get('prompt3', '')}")
 
-		# Phase 1 images (structure only)
-		if 'ctf_phase1_outputs' in st.session_state:
-			st.markdown('#### 📐 Phase 1 — Structure Only (no style, α=0)')
-			st.caption('Kiểm tra: hình dáng vật thể đúng chưa? Bố cục radial/layout rõ chưa?')
-			cols = st.columns(len(st.session_state['ctf_phase1_outputs']))
-			for col, img in zip(cols, st.session_state['ctf_phase1_outputs']):
-				col.image(img, use_container_width=True)
+		# 3-Stage Progression Visualization
+		if 'ctf_stage1_outputs' in st.session_state and 'ctf_stage2_outputs' in st.session_state and 'artdapted_outputs' in st.session_state:
+			st.markdown('---')
+			st.markdown('#### 📈 Generation Progression')
+			st.caption('Tiến trình mọc chi tiết (Structure -> Mid-Style -> Final)')
 
-		# Phase 2 images (final CTF)
-		if 'artdapted_outputs' in st.session_state:
-			st.markdown('#### 🎨 Phase 2 — Final CTF Output (style blended)')
-			st.caption('Kết quả cuối: style có giữ nguyên cấu trúc Phase 1 không?')
-			cols = st.columns(len(st.session_state['artdapted_outputs']))
-			for col, img in zip(cols, st.session_state['artdapted_outputs']):
-				col.image(img, use_container_width=True)
+			stage_cols = st.columns(3)
+			
+			with stage_cols[0]:
+				st.markdown('**Stage 1: Structure (α = 0)**')
+				for img in st.session_state['ctf_stage1_outputs']:
+					st.image(img, use_container_width=True)
+			
+			with stage_cols[1]:
+				st.markdown('**Stage 2: Mid-Style (α = 0.5)**')
+				for img in st.session_state['ctf_stage2_outputs']:
+					st.image(img, use_container_width=True)
+					
+			with stage_cols[2]:
+				st.markdown('**Stage 3: Final Output (α = 1.0)**')
+				for img in st.session_state['artdapted_outputs']:
+					st.image(img, use_container_width=True)
 
 
 # Preprocess
