@@ -107,7 +107,7 @@ class CTFUNetModel(UNetModel):
 
         # ── Decoder ──────────────────────────────────────────────
         for i, module in enumerate(self.output_blocks):
-            h = th.cat([h, hs.pop()], dim=1)
+            h = torch.cat([h, hs.pop()], dim=1)
             if i in [3, 4, 5, 6, 7, 8, 9, 10, 11]:
                 # ALL output blocks MUST respect temporal alpha.
                 # Early steps (alpha=0): Use CLIP (Content) which KNOWS modern objects like VR/Smartphones.
