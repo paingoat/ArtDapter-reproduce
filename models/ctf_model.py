@@ -132,8 +132,8 @@ class ArtDaptedModelCTF(ArtDaptedModel):
         # Save first sample's decomposition for UI display
         self._last_decomposed = decomposed[0] if decomposed else {}
 
-        p1_prompts = ["A rough uncolored pencil sketch, geometric contour line art of: " + d['prompt1'] for d in decomposed]
-        p2_prompts = ["A rough uncolored pencil sketch, basic shading of: " + d['prompt2'] for d in decomposed]
+        p1_prompts = [d['prompt1'] for d in decomposed]
+        p2_prompts = [d['prompt2'] for d in decomposed]
         p3_prompts = [d['prompt3'] for d in decomposed]
 
         # Print decomposition for debugging (visible in Kaggle/terminal output)
