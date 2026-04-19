@@ -156,7 +156,11 @@ def load_model():
 			device = resolve_device(st.session_state.model_options_device)
 			weights = load_weights(st.session_state.model_options_checkpoint, device)
 			model = instantiate_from_config(st.session_state.model_options_config).to(device)
-			model.load_state_dict(weights, strict=True)
+			missing, unexpected = model.load_state_dict(weights, strict=False)
+			if missing:
+				print(f"⚠️ Missing keys ({len(missing)}): {missing[:5]}{'...' if len(missing) > 5 else ''}")
+			if unexpected:
+				print(f"⚠️ Unexpected keys ({len(unexpected)}): {unexpected[:5]}{'...' if len(unexpected) > 5 else ''}")
 			model.eval()
 	st.session_state['model'] = model
 
