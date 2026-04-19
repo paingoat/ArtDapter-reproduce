@@ -86,22 +86,17 @@ class CTFUNetModel(UNetModel):
 
         h = x.type(self.dtype)
 
-        # ── Encoder ──────────────────────────────────────────────
+        # ── Input & Mid Blocks ───────────────────────────────────
+        # Ensure content is cropped to match style sequence length for consistency
+        content_cropped = content[:, :style.shape[1]]
+
         for i, module in enumerate(self.input_blocks):
-            if i in LAYOUT_IN:
-                ctx = layout
-            elif i in BLEND_IN:
-                # Early denoising (alpha~0): layout dominates
-                # After ~33% steps: transitions to content
-                w   = min(alpha * 3.0, 1.0)
-                ctx = lerp(layout, content, w)
-            elif i in CONTENT_IN:
-                ctx = content
-            else:
-                # Blocks without SpatialTransformer ignore context entirely
-                # (TimestepEmbedSequential only passes context to SpatialTransformer layers)
-                ctx = content
-            h = module(h, emb, ctx)
+            # All input blocks need the NOUN ("spaceship", "VR headset") to form geometry.
+            # Using P1 (layout, no nouns) in early layers forces generic blobs.
+            # So we use P2 (content) for ALL input layers to ensure perfect structure.
+            c_block = content_cropped
+
+            h = module(h, emb, context=c_block)
             hs.append(h)
 
         # ── Bottleneck ────────────────────────────────────────────
