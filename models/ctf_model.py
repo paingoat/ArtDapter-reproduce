@@ -129,16 +129,21 @@ class ArtDaptedModelCTF(ArtDaptedModel):
         """
         decomposed = self.decomposer.decompose_batch(captions, art_styles, PoAs)
 
+        # Save first sample's decomposition for UI display
+        self._last_decomposed = decomposed[0] if decomposed else {}
+
         p1_prompts = [d['prompt1'] for d in decomposed]
         p2_prompts = [d['prompt2'] for d in decomposed]
         p3_prompts = [d['prompt3'] for d in decomposed]
 
-        # Log decomposition for debugging
+        # Print decomposition for debugging (visible in Kaggle/terminal output)
         for i, d in enumerate(decomposed):
-            logger.info("Sample %d decomposition:", i)
-            logger.info("  P1 (layout):  %s", d['prompt1'])
-            logger.info("  P2 (content): %s", d['prompt2'])
-            logger.info("  P3 (full):    %s", d['prompt3'])
+            print(f"\n{'='*60}")
+            print(f"🔍 CTF Decomposition (Sample {i}):")
+            print(f"  [P1] Layout : {d['prompt1']}")
+            print(f"  [P2] Content: {d['prompt2']}")
+            print(f"  [P3] Full   : {d['prompt3']}")
+            print(f"{'='*60}")
 
         cond_layout  = self.encode_clip(p1_prompts)              # (B, 77, 768)
         cond_content = self.encode_clip(p2_prompts)              # (B, 77, 768)

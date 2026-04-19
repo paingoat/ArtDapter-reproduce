@@ -86,17 +86,20 @@ class CTFUNetModel(UNetModel):
 
         h = x.type(self.dtype)
 
-        # ── Input & Mid Blocks ───────────────────────────────────
-        # Ensure content is cropped to match style sequence length for consistency
-        content_cropped = content[:, :style.shape[1]]
-
+        # ── Encoder: 3-tier routing ──────────────────────────────
+        # P1 (layout) now contains key nouns + spatial arrangement
+        # → safe to inject into early blocks without causing blobs
         for i, module in enumerate(self.input_blocks):
-            # All input blocks need the NOUN ("spaceship", "VR headset") to form geometry.
-            # Using P1 (layout, no nouns) in early layers forces generic blobs.
-            # So we use P2 (content) for ALL input layers to ensure perfect structure.
-            c_block = content_cropped
-
-            h = module(h, emb, context=c_block)
+            if i in LAYOUT_IN:       # {1, 2} — 64×64 — Coarse: subject + position
+                ctx = layout
+            elif i in BLEND_IN:      # {4, 5} — 32×32 — Spatial transition
+                ctx = lerp(layout, content, 0.5)  # static blend (spatial, not temporal)
+            elif i in CONTENT_IN:    # {7, 8} — 16×16 — Full content detail
+                ctx = content
+            else:
+                # Blocks without SpatialTransformer (context is ignored)
+                ctx = content
+            h = module(h, emb, context=ctx)
             hs.append(h)
 
         # ── Bottleneck ────────────────────────────────────────────

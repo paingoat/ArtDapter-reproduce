@@ -232,6 +232,8 @@ def render_sampling_options(container):
 	# CTF controls
 	sampling_options['style_start'] = col3.slider('Style Start', value=0.7, min_value=0.0, max_value=1.0, step=0.05,
 													 help='Fraction of steps before style injection begins (CTF mode only)')
+	sampling_options['show_phase'] = col3.checkbox('🔍 Show Phase Analysis', value=True,
+													 help='Generate additional structure-only image (no style) for comparison. ~7s extra.')
 
 	return sampling_options
 
@@ -239,6 +241,13 @@ def render_sampling_options(container):
 def render_display_options(container):
 	col, _, _ = container.columns(3)
 	col.number_input('Columns', min_value=1, step=1, key='display_options_columns', on_change=images_quantity_change)
+
+
+def decode_to_numpy(z, model):
+	"""Decode latents to numpy images list."""
+	x = model.decode_first_stage(z)
+	x = (einops.rearrange(x, 'b c h w -> b h w c') * 0.5 + 0.5).clamp(0, 1)
+	return [img.cpu().numpy() for img in x]
 
 
 @torch.no_grad()
@@ -262,13 +271,16 @@ def generate():
 	ddim_eta = sampling_options.get('ddim_eta', 0.0)
 	cfg_scale = sampling_options['CFG_scale']
 	style_start = sampling_options.get('style_start', 0.7)
+	show_phase = sampling_options.get('show_phase', True)
 
 	# Check if model is CTF-capable
 	is_ctf = hasattr(model, 'get_ctf_conditioning')
 
 	if is_ctf:
 		# ── CTF Pipeline ─────────────────────────────────────────
-		with status_placeholder, st.spinner('Decomposing prompt...'):
+
+		# Step 1: Decompose prompt via GPT
+		with status_placeholder, st.spinner('🤖 Decomposing prompt via GPT...'):
 			cond = model.get_ctf_conditioning(
 				captions=[prompt] * sample_quantity,
 				art_styles=[art_style] * sample_quantity,
@@ -276,22 +288,39 @@ def generate():
 				sample_quantity=sample_quantity,
 			)
 			un_cond = model.get_unconditional_conditioning(sample_quantity)
+			# Save decomposed prompts for debug panel
+			if hasattr(model, '_last_decomposed'):
+				st.session_state['ctf_prompts'] = model._last_decomposed
 
-		with status_placeholder, st.spinner('Sampling (CTF)...'):
-			ctf_sampler = CTFDDIMSampler(model)
-			artdapted_z_samples, _ = ctf_sampler.sample(
-				S=sampling_steps,
-				batch_size=sample_quantity,
-				shape=(4, sample_resolution // 8, sample_resolution // 8),
-				conditioning=cond,
-				unconditional_guidance_scale=cfg_scale,
-				unconditional_conditioning=un_cond,
-				eta=ddim_eta,
-				style_start=style_start,
-				verbose=False,
-			)
+		ctf_sampler = CTFDDIMSampler(model)
+		sample_kwargs = dict(
+			S=sampling_steps,
+			batch_size=sample_quantity,
+			shape=(4, sample_resolution // 8, sample_resolution // 8),
+			conditioning=cond,
+			unconditional_guidance_scale=cfg_scale,
+			unconditional_conditioning=un_cond,
+			eta=ddim_eta,
+			verbose=False,
+		)
+
+		# Step 2: Phase 1 — Structure only (alpha=0 throughout)
+		if show_phase:
+			with status_placeholder, st.spinner('📐 Phase 1 — Structure sampling (no style)...'):
+				z_phase1, _ = ctf_sampler.sample(**sample_kwargs, style_start=1.1)
+				st.session_state['ctf_phase1_outputs'] = decode_to_numpy(z_phase1, model)
+		else:
+			st.session_state.pop('ctf_phase1_outputs', None)
+
+		# Step 3: Phase 2 — Full CTF (style blended from style_start)
+		with status_placeholder, st.spinner('🎨 Phase 2 — CTF sampling with style...'):
+			artdapted_z_samples, _ = ctf_sampler.sample(**sample_kwargs, style_start=style_start)
+
 	else:
 		# ── Original Pipeline (backward compatible) ────────────
+		st.session_state.pop('ctf_prompts', None)
+		st.session_state.pop('ctf_phase1_outputs', None)
+
 		caption = model.apply_prompt_template([prompt]* sample_quantity, [art_style]* sample_quantity, [PoA]* sample_quantity)
 		cond = dict(c_crossattn =	[model.get_learned_conditioning(caption)] )
 		un_cond = dict(c_crossattn=[model.get_unconditional_conditioning(sample_quantity)])
@@ -317,10 +346,39 @@ def generate():
 				)
 				artdapted_z_samples, _ = ddim_sampler.sample(conditioning=cond, **kwargs)
 
-	artdapted_x_samples = model.decode_first_stage(artdapted_z_samples)
-	artdapted_x_samples = (einops.rearrange(artdapted_x_samples, 'b c h w -> b h w c')*0.5 + 0.5).clamp(0,1).cpu().numpy()
-	st.session_state.artdapted_outputs = [img for img in artdapted_x_samples]
+	st.session_state.artdapted_outputs = decode_to_numpy(artdapted_z_samples, model)
 	st.toast(f'Output{"s" if st.session_state.sampling_options_quantity > 1 else ""} generated!', icon='🎉')
+
+
+def render_ctf_debug_panel(container):
+	"""Display CTF Phase Analysis: GPT decomposition + Phase 1 vs Phase 2 images."""
+	if 'ctf_prompts' not in st.session_state:
+		return
+
+	with container.expander('🔍 CTF Phase Analysis', expanded=True):
+		# Prompt decomposition display
+		st.markdown('#### 🤖 GPT Prompt Decomposition')
+		p = st.session_state['ctf_prompts']
+		c1, c2, c3 = st.columns(3)
+		c1.info(f"**P1 — Spatial Layout:**\n\n{p.get('prompt1', '')}")
+		c2.success(f"**P2 — Content:**\n\n{p.get('prompt2', '')}")
+		c3.warning(f"**P3 — Full + Style:**\n\n{p.get('prompt3', '')}")
+
+		# Phase 1 images (structure only)
+		if 'ctf_phase1_outputs' in st.session_state:
+			st.markdown('#### 📐 Phase 1 — Structure Only (no style, α=0)')
+			st.caption('Kiểm tra: hình dáng vật thể đúng chưa? Bố cục radial/layout rõ chưa?')
+			cols = st.columns(len(st.session_state['ctf_phase1_outputs']))
+			for col, img in zip(cols, st.session_state['ctf_phase1_outputs']):
+				col.image(img, use_container_width=True)
+
+		# Phase 2 images (final CTF)
+		if 'artdapted_outputs' in st.session_state:
+			st.markdown('#### 🎨 Phase 2 — Final CTF Output (style blended)')
+			st.caption('Kết quả cuối: style có giữ nguyên cấu trúc Phase 1 không?')
+			cols = st.columns(len(st.session_state['artdapted_outputs']))
+			for col, img in zip(cols, st.session_state['artdapted_outputs']):
+				col.image(img, use_container_width=True)
 
 
 # Preprocess
@@ -364,3 +422,6 @@ render_images(right)
 tab1, tab2 = right.tabs(['**Sampling Options**', '**Display Options**'])
 sampling_options = render_sampling_options(tab1)
 render_display_options(tab2)
+
+# CTF Phase Analysis panel (below main layout)
+render_ctf_debug_panel(bot)
