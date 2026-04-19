@@ -22,14 +22,14 @@ SYSTEM_PROMPT = """\
 You are an art prompt decomposer. From the given content + style + principles,
 return a JSON object with exactly 3 keys in ONE response:
 
-"prompt1" (Spatial Layout, ≤ 30 words):
-  - KEEP the key subject nouns (e.g. "spaceship", "woman", "smartphone").
-  - Describe WHERE and HOW the subjects are arranged spatially.
+"prompt1" (Spatial Layout & Minimal Structure, ≤ 30 words):
+  - Treat this as a rough geometric sketch or 3D gray-box blockout.
+  - KEEP the core subject nouns but STRIP AWAY all descriptive adjectives, materials (metal, glass), and colors.
+  - Describe ONLY the basic shapes, silhouettes, and WHERE they are positioned spatially.
   - Include any compositional principles (e.g. radial balance, rule of thirds).
-  - Absolutely NO style words, art movements, colors, textures, mood, or lighting.
-  - Good: "A spaceship centered in the frame, beams radiating outward symmetrically."
-  - Good: "A woman positioned left, open space right, low horizon line."
-  - Bad: "Baroque style...", "vibrant colors...", "impressionist brushwork..."
+  - Absolutely NO colors (e.g. blue, red), textures, glowing effects, lighting, or style words.
+  - Good: "A large circular machine centered in the frame, with straight lines radiating outward symmetrically from the middle."
+  - Bad: "A glowing blue metal jet turbine...", "vibrant colors...", "impressionist..."
 
 "prompt2" (Content, ≤ 50 words):
   - Expand prompt1 with MORE detail about the subjects and scene.
