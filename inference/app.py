@@ -14,6 +14,7 @@ from pytorch_lightning import Trainer, seed_everything
 from ldm.util import instantiate_from_config
 from utils import load_weights, resolve_device
 from ldm.models.diffusion.custom_ddim import CustomDDIMSampler
+from ldm.models.diffusion.ctf_ddim import CTFDDIMSampler
 
 POA_PRINCIPLES = ['balance', 'harmony', 'variety', 'unity', 'contrast', 'emphasis', 'proportion', 'movement', 'rhythm', 'pattern']
 
@@ -73,7 +74,13 @@ def is_diff_model():
 
 
 def load_inference_config():
-	st.session_state.config = OmegaConf.load(str(CUR_DIR / '../configs/inference_config.yaml'))
+	# Select CTF or regular config based on session state
+	config_name = st.session_state.get('config_mode', 'regular')
+	if config_name == 'ctf':
+		config_path = CUR_DIR / '../configs/ctf_inference_config.yaml'
+	else:
+		config_path = CUR_DIR / '../configs/inference_config.yaml'
+	st.session_state.config = OmegaConf.load(str(config_path))
 
 
 def load_cond_examples():
@@ -221,7 +228,11 @@ def render_sampling_options(container):
 	)
 	if sampling_options['strategy'] == 'ddim':
 		sampling_options['ddim_eta'] = col3.number_input("η (DDIM)", value=0.)
-	
+
+	# CTF controls
+	sampling_options['style_start'] = col3.slider('Style Start', value=0.7, min_value=0.0, max_value=1.0, step=0.05,
+													 help='Fraction of steps before style injection begins (CTF mode only)')
+
 	return sampling_options
 
 
@@ -248,37 +259,67 @@ def generate():
 	sample_quantity = sampling_options['quantity']
 	sample_resolution = sampling_options['resolution']
 	sampling_steps = sampling_options['steps']
-	ddim_eta = sampling_options['ddim_eta']
+	ddim_eta = sampling_options.get('ddim_eta', 0.0)
 	cfg_scale = sampling_options['CFG_scale']
+	style_start = sampling_options.get('style_start', 0.7)
 
-	caption = model.apply_prompt_template([prompt]* sample_quantity, [art_style]* sample_quantity, [PoA]* sample_quantity)
-	cond = dict(c_crossattn =	[model.get_learned_conditioning(caption)] )
-	un_cond = dict(c_crossattn=[model.get_unconditional_conditioning(sample_quantity)])
+	# Check if model is CTF-capable
+	is_ctf = hasattr(model, 'get_ctf_conditioning')
 
-	with status_placeholder, st.spinner('Sampling...'):
-		if sampling_options['strategy'] == 'regular':
-			kwargs = dict(
-				batch_size =									sample_quantity,
-				unconditional_conditioning =	un_cond,
-				ddim =												False
+	if is_ctf:
+		# ── CTF Pipeline ─────────────────────────────────────────
+		with status_placeholder, st.spinner('Decomposing prompt...'):
+			cond = model.get_ctf_conditioning(
+				captions=[prompt] * sample_quantity,
+				art_styles=[art_style] * sample_quantity,
+				PoAs=[PoA] * sample_quantity,
+				sample_quantity=sample_quantity,
 			)
-			artdapted_z_samples, _ =	model.sample_log(cond=cond, **kwargs)
-		elif sampling_options['strategy'] == 'ddim':
-			ddim_sampler = CustomDDIMSampler(model)
-			kwargs = dict(
-				S =															sampling_steps,
-				batch_size =										sample_quantity,
-				shape =													(4, sample_resolution // 8, sample_resolution // 8),
-				verbose =												False,
-				eta =														ddim_eta,
-				unconditional_guidance_scale =	cfg_scale,
-				unconditional_conditioning =		un_cond,
-			)
-			artdapted_z_samples, _ =	ddim_sampler.sample(conditioning=cond, **kwargs)
+			un_cond = model.get_unconditional_conditioning(sample_quantity)
 
-	artdapted_x_samples =	model.decode_first_stage(artdapted_z_samples)
-	artdapted_x_samples =	(einops.rearrange(artdapted_x_samples, 'b c h w -> b h w c')*0.5 + 0.5).clamp(0,1).cpu().numpy()
-	st.session_state.artdapted_outputs =	[img for img in artdapted_x_samples]
+		with status_placeholder, st.spinner('Sampling (CTF)...'):
+			ctf_sampler = CTFDDIMSampler(model)
+			artdapted_z_samples, _ = ctf_sampler.sample(
+				S=sampling_steps,
+				batch_size=sample_quantity,
+				shape=(4, sample_resolution // 8, sample_resolution // 8),
+				conditioning=cond,
+				unconditional_guidance_scale=cfg_scale,
+				unconditional_conditioning=un_cond,
+				eta=ddim_eta,
+				style_start=style_start,
+				verbose=False,
+			)
+	else:
+		# ── Original Pipeline (backward compatible) ────────────
+		caption = model.apply_prompt_template([prompt]* sample_quantity, [art_style]* sample_quantity, [PoA]* sample_quantity)
+		cond = dict(c_crossattn =	[model.get_learned_conditioning(caption)] )
+		un_cond = dict(c_crossattn=[model.get_unconditional_conditioning(sample_quantity)])
+
+		with status_placeholder, st.spinner('Sampling...'):
+			if sampling_options['strategy'] == 'regular':
+				kwargs = dict(
+					batch_size=sample_quantity,
+					unconditional_conditioning=un_cond,
+					ddim=False
+				)
+				artdapted_z_samples, _ = model.sample_log(cond=cond, **kwargs)
+			elif sampling_options['strategy'] == 'ddim':
+				ddim_sampler = CustomDDIMSampler(model)
+				kwargs = dict(
+					S=sampling_steps,
+					batch_size=sample_quantity,
+					shape=(4, sample_resolution // 8, sample_resolution // 8),
+					verbose=False,
+					eta=ddim_eta,
+					unconditional_guidance_scale=cfg_scale,
+					unconditional_conditioning=un_cond,
+				)
+				artdapted_z_samples, _ = ddim_sampler.sample(conditioning=cond, **kwargs)
+
+	artdapted_x_samples = model.decode_first_stage(artdapted_z_samples)
+	artdapted_x_samples = (einops.rearrange(artdapted_x_samples, 'b c h w -> b h w c')*0.5 + 0.5).clamp(0,1).cpu().numpy()
+	st.session_state.artdapted_outputs = [img for img in artdapted_x_samples]
 	st.toast(f'Output{"s" if st.session_state.sampling_options_quantity > 1 else ""} generated!', icon='🎉')
 
 
@@ -297,6 +338,13 @@ st.set_page_config(
 	layout =			'wide')
 st.title('ArtDapted Model Inference')
 st.markdown(load_CSS(), unsafe_allow_html=True)
+# Pipeline mode selector
+pipeline_mode = st.sidebar.radio('Pipeline Mode', ['regular', 'ctf'], index=0, horizontal=True,
+									 help='CTF = Coarse-to-Fine prompt orchestration')
+if st.session_state.get('config_mode') != pipeline_mode:
+	st.session_state['config_mode'] = pipeline_mode
+	load_inference_config()
+
 st.button('🎨 **GENERATE**', type='primary', on_click=generate)
 model_options = render_model_options(st.sidebar)
 
