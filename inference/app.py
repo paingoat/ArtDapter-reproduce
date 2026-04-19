@@ -378,7 +378,7 @@ def render_ctf_debug_panel(container):
 			st.caption('Kiểm tra: hình dáng vật thể đúng chưa? Bố cục radial/layout rõ chưa?')
 			cols = st.columns(len(st.session_state['ctf_phase1_outputs']))
 			for col, img in zip(cols, st.session_state['ctf_phase1_outputs']):
-				col.image(img, use_container_width=True)
+				col.image(img, width='stretch')
 
 		# Phase 2 images (final CTF)
 		if 'artdapted_outputs' in st.session_state:
@@ -386,7 +386,7 @@ def render_ctf_debug_panel(container):
 			st.caption('Kết quả cuối: style có giữ nguyên cấu trúc Phase 1 không?')
 			cols = st.columns(len(st.session_state['artdapted_outputs']))
 			for col, img in zip(cols, st.session_state['artdapted_outputs']):
-				col.image(img, use_container_width=True)
+				col.image(img, width='stretch')
 
 
 # Preprocess
@@ -420,7 +420,7 @@ bot = st.container()
 
 left, right = top.columns(2)
 left.markdown('### Controls')
-left.button('🪄 Randomize prompt & controls', on_click=randomize_values, use_container_width=True)
+left.button('🪄 Randomize prompt & controls', on_click=randomize_values, width='stretch')
 prompt_controls = render_prompt_controls(left)
 left.divider()
 art_controls = render_art_controls(left)

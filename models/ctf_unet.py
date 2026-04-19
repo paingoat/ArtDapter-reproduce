@@ -84,38 +84,37 @@ class CTFUNetModel(UNetModel):
             assert y is not None and y.shape[0] == x.shape[0]
             emb = emb + self.label_emb(y)
 
-        h = x.type(self.dtype)
+        # ── Alpha Blended Context ──────────────────────────────────
+        # content_ctx dynamically interpolates between Content (P2) and Style (P3)
+        # alpha=0: early steps, content only. Delineates geometry and structure.
+        # alpha=1: late steps, style only. Applies heavy artistic traits.
+        content_ctx = lerp(content, style, alpha)
 
         # ── Encoder: 3-tier routing ──────────────────────────────
-        # P1 (layout) now contains key nouns + spatial arrangement
-        # → safe to inject into early blocks without causing blobs
         for i, module in enumerate(self.input_blocks):
             if i in LAYOUT_IN:       # {1, 2} — 64×64 — Coarse: subject + position
                 ctx = layout
             elif i in BLEND_IN:      # {4, 5} — 32×32 — Spatial transition
-                ctx = lerp(layout, content, 0.5)  # static blend (spatial, not temporal)
-            elif i in CONTENT_IN:    # {7, 8} — 16×16 — Full content detail
-                ctx = content
+                # Let alpha determine if it's content-focused or style-focused
+                ctx = lerp(layout, content_ctx, 0.5) 
+            elif i in CONTENT_IN:    # {7, 8} — 16×16 — Full content/style detail
+                ctx = content_ctx
             else:
                 # Blocks without SpatialTransformer (context is ignored)
-                ctx = content
+                ctx = content_ctx
             h = module(h, emb, context=ctx)
             hs.append(h)
 
         # ── Bottleneck ────────────────────────────────────────────
-        h = self.middle_block(h, emb, content)
+        h = self.middle_block(h, emb, content_ctx)  # Needs style to alter deep semantics
 
         # ── Decoder ──────────────────────────────────────────────
         for i, module in enumerate(self.output_blocks):
             h = torch.cat([h, hs.pop()], dim=1)
-            if i in [3, 4, 5, 6, 7, 8, 9, 10, 11]:
-                # ALL output blocks MUST respect temporal alpha.
-                # Early steps (alpha=0): Use CLIP (Content) which KNOWS modern objects like VR/Smartphones.
-                # Late steps (alpha=1): Fade into ArtDapter (Style) for brushstrokes and textures.
-                ctx = lerp(content, style, alpha)
-            else:
-                # Blocks without SpatialTransformer
-                ctx = content
+            # Output blocks all receive the blended content/style
+            # if they have SpatialTransformer.
+            # Even if they don't, passing context is harmless
+            ctx = content_ctx
             h = module(h, emb, ctx)
 
         h = h.type(x.dtype)
