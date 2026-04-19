@@ -84,6 +84,8 @@ class CTFUNetModel(UNetModel):
             assert y is not None and y.shape[0] == x.shape[0]
             emb = emb + self.label_emb(y)
 
+        h = x.type(self.dtype)
+
         # ── Alpha Blended Context ──────────────────────────────────
         # content_ctx dynamically interpolates between Content (P2) and Style (P3)
         # alpha=0: early steps, content only. Delineates geometry and structure.
