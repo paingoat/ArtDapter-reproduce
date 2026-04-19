@@ -110,12 +110,11 @@ class CTFUNetModel(UNetModel):
         # ── Decoder ──────────────────────────────────────────────
         for i, module in enumerate(self.output_blocks):
             h = th.cat([h, hs.pop()], dim=1)
-            if i in STYLE_OUT:
-                ctx = style
-            elif i in BLEND_OUT:
-                # After 70% denoising steps (alpha > 0.7): style takes over
-                w   = max(0.0, min((alpha - 0.7) / 0.3, 1.0))
-                ctx = lerp(content, style, w)
+            if i in [3, 4, 5, 6, 7, 8, 9, 10, 11]:
+                # ALL output blocks MUST respect temporal alpha.
+                # Early steps (alpha=0): Use CLIP (Content) which KNOWS modern objects like VR/Smartphones.
+                # Late steps (alpha=1): Fade into ArtDapter (Style) for brushstrokes and textures.
+                ctx = lerp(content, style, alpha)
             else:
                 # Blocks without SpatialTransformer
                 ctx = content
