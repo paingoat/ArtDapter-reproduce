@@ -130,7 +130,14 @@ class CTFDDIMSampler(CustomDDIMSampler):
             ) - 1
             timesteps = self.ddim_timesteps[:subset_end]
 
-        intermediates = {'x_inter': [img], 'pred_x0': [img]}
+        intermediates = {
+            'x_inter': [img], 
+            'pred_x0': [img],
+            'stage_structure': None,
+            'stage_content': None,
+            'stage_style': None
+        }
+        
         time_range = (
             reversed(range(0, timesteps))
             if ddim_use_original_steps
@@ -140,11 +147,23 @@ class CTFDDIMSampler(CustomDDIMSampler):
         print(f"Running CTF DDIM Sampling with {total_steps} timesteps, "
               f"layout_end={layout_end}, content_end={content_end}")
 
-        iterator = tqdm(time_range, desc='CTF DDIM', total=total_steps)
+        iterator = tqdm(time_range, disable=False, total=total_steps)
+
+        # Tính toán chính xác Index kết thúc của các Pha
+        layout_idx = int(layout_end * (total_steps - 1))
+        content_idx = int(content_end * (total_steps - 1))
 
         for i, step in enumerate(iterator):
             index = total_steps - i - 1
             ts = torch.full((b,), step, device=device, dtype=torch.long)
+
+            # Thay đổi Text trên thanh tải
+            if i <= layout_idx:
+                iterator.set_description("Phase 1: Layout")
+            elif i <= content_idx:
+                iterator.set_description("Phase 2: Content")
+            else:
+                iterator.set_description("Phase 3: Style")
 
             # Inpainting mask support
             if mask is not None:
@@ -181,9 +200,21 @@ class CTFDDIMSampler(CustomDDIMSampler):
                 callback(i)
             if img_callback:
                 img_callback(pred_x0, i)
+                
             if index % log_every_t == 0 or index == total_steps - 1:
                 intermediates['x_inter'].append(img)
                 intermediates['pred_x0'].append(pred_x0)
+
+            # LƯU ẢNH CHỐT GIAI ĐOẠN (Phục vụ Streamlit Visualization)
+            if i == layout_idx:
+                intermediates['stage_structure'] = pred_x0.clone()
+                print(f" [✓] Đã chốt kiến trúc Layout (Step {i})")
+            elif i == content_idx:
+                intermediates['stage_content'] = pred_x0.clone()
+                print(f" [✓] Đã tạo xong chi tiết Content (Step {i})")
+            elif i == total_steps - 1:
+                intermediates['stage_style'] = pred_x0.clone()
+                print(f" [✓] Đã phủ màu Style hoàn tất (Step {i})")
 
         return img, intermediates
 
