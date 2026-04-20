@@ -118,16 +118,28 @@ class ArtDaptedModelCTF(ArtDaptedModel):
 
         # Ép P1 phải vẽ nháp xám (grayscale/blockout) để không phá hỏng Phase 3
         p1_prompts = [d['prompt1'] + ", rough uncolored grayscale blockout, empty neutral background" for d in decomposed]
+        
+        # P2: Nội dung thô cơ bản
         p2_prompts = [d['prompt2'] for d in decomposed]
-        p3_prompts = [d['prompt3'] for d in decomposed]
+        
+        # P3: BẮT BUỘC nhúng tên Art Style vào cuối để đảm bảo T5 kích hoạt đúng phong cách
+        p3_prompts = []
+        for i, d in enumerate(decomposed):
+            style = art_styles[i]
+            p3_text = d['prompt3']
+            if style:
+                # Nếu GPT lỡ quên từ khoá style, ta nhồi lại vào cuối
+                if style.lower() not in p3_text.lower():
+                    p3_text += f", {style} style"
+            p3_prompts.append(p3_text)
 
         # Print decomposition for debugging (visible in Kaggle/terminal output)
         for i, d in enumerate(decomposed):
             print(f"\n{'='*60}")
             print(f"🔍 CTF Decomposition (Sample {i}):")
-            print(f"  [P1] Layout : {d['prompt1']}")
-            print(f"  [P2] Content: {d['prompt2']}")
-            print(f"  [P3] Full   : {d['prompt3']}")
+            print(f"  [P1] Layout : {p1_prompts[i]}")
+            print(f"  [P2] Content: {p2_prompts[i]}")
+            print(f"  [P3] Full   : {p3_prompts[i]}")
             print(f"{'='*60}")
 
         cond_layout  = self.encode_clip(p1_prompts)              # (B, 77, 768)
