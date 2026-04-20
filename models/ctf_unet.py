@@ -43,88 +43,27 @@ BLEND_OUT  = {6, 7, 8}     # 32×32, 640ch — transition content → style
 
 
 def lerp(a: torch.Tensor, b: torch.Tensor, w: float) -> torch.Tensor:
-    """
-    Linear interpolation: w=0 → a, w=1 → b.
-    Crops to min(T_a, T_b) along the sequence dimension to avoid shape errors
-    when CLIP (77 tokens) is blended with ArtDapter (64 tokens).
-    """
+    """Legacy lerp function - kept for compatibility if needed elsewhere."""
     T = min(a.shape[1], b.shape[1])
     return (1.0 - w) * a[:, :T] + w * b[:, :T]
 
 
 class CTFUNetModel(UNetModel):
     """
-    Coarse-to-Fine UNetModel: routes different context signals to different
-    block groups based on their spatial resolution and role in the U-Net.
-
-    Context dict keys:
-        'layout'  : (B, 77, 768)  — CLIP embedding of Prompt 1 (layout)
-        'content' : (B, 77, 768)  — CLIP embedding of Prompt 2 (content)
-        'style'   : (B, 64, 768)  — ArtDapter output of Prompt 3 (style)
-        'alpha'   : float         — denoising progress blend weight (0→1)
+    Temporal Proxy Prompt U-Net.
+    Since we now swap the prompts temporally (along steps) rather than spatially (along layers),
+    this network simply acts as a standard UNetModel.
+    Any tensor context passed will be routed naturally by the underlying SD architecture.
     """
 
     def forward(self, x, timesteps=None, context=None, y=None, **kwargs):
-        # ── Fallback: legacy mode (backward compatibility) ────────
-        if not isinstance(context, dict):
-            return super().forward(x, timesteps, context, y, **kwargs)
+        # If context is a dict, it's deprecated. We expect tensors now.
+        if isinstance(context, dict):
+            raise ValueError(
+                "CTFUNetModel now expects a Tensor context (Proxy Prompt) "
+                "instead of a dict. Please update the sampling pipeline."
+            )
 
-        # ── CTF mode ──────────────────────────────────────────────
-        layout  = context['layout']     # (B, 77, 768) — CLIP P1
-        content = context['content']    # (B, 77, 768) — CLIP P2
-        style   = context['style']      # (B, 64, 768) — ArtDapter P3
-        alpha   = float(context.get('alpha', 0.0))  # 0.0 → 1.0
+        # Standard U-Net behavior
+        return super().forward(x, timesteps, context, y, **kwargs)
 
-        # Standard U-Net time embedding
-        hs    = []
-        t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
-        emb   = self.time_embed(t_emb)
-
-        if self.num_classes is not None:
-            assert y is not None and y.shape[0] == x.shape[0]
-            emb = emb + self.label_emb(y)
-
-        h = x.type(self.dtype)
-
-        # ── Alpha Blended Context ──────────────────────────────────
-        # content_ctx dynamically interpolates between Content (P2) and Style (P3)
-        # alpha=0: early steps, content only. Delineates geometry and structure.
-        # alpha=1: late steps, style only. Applies heavy artistic traits.
-        content_ctx = lerp(content, style, alpha)
-
-        # ── Encoder: 3-tier routing ──────────────────────────────
-        for i, module in enumerate(self.input_blocks):
-            if i in LAYOUT_IN:       # {1, 2} — 64×64 — Coarse: subject + position
-                ctx = layout
-            elif i in BLEND_IN:      # {4, 5} — 32×32 — Spatial transition
-                # Strictly NO STYLE in encoder, only layout and content
-                ctx = lerp(layout, content, 0.5) 
-            elif i in CONTENT_IN:    # {7, 8} — 16×16 — Object semantics
-                ctx = content
-            else:
-                # Blocks without SpatialTransformer (context is ignored)
-                ctx = content
-            h = module(h, emb, context=ctx)
-            hs.append(h)
-
-        # ── Bottleneck ────────────────────────────────────────────
-        # Solidify content structure before decoding
-        h = self.middle_block(h, emb, content)
-
-        # ── Decoder ──────────────────────────────────────────────
-        for i, module in enumerate(self.output_blocks):
-            h = torch.cat([h, hs.pop()], dim=1)
-            # Inject style primarily in the decoder
-            if i in BLEND_OUT:
-                # Medium resolution: blend style with lower intensity
-                ctx = lerp(content, style, alpha * 0.5)
-            else:
-                # High resolution / Style blocks: full style injection
-                ctx = content_ctx
-            h = module(h, emb, ctx)
-
-        h = h.type(x.dtype)
-        if self.predict_codebook_ids:
-            return self.id_predictor(h)
-        else:
-            return self.out(h)

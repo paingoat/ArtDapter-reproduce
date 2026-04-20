@@ -16,41 +16,6 @@ from ldm.modules.diffusionmodules.util import noise_like
 from .custom_ddim import CustomDDIMSampler
 
 
-import math
-
-def alpha_schedule(
-    step_idx: int,
-    total_steps: int,
-    style_start: float = 0.7,
-    base_alpha: float = 0.15,
-) -> float:
-    """
-    Compute step-aware blend weight alpha ∈ [0, 1] using Cosine interpolation.
-
-    Args:
-        step_idx:    Current step index (0 = start of denoising, total_steps-1 = end).
-        total_steps: Total number of DDIM steps.
-        style_start: Fraction of steps before style starts blending in (default 0.7).
-        base_alpha:  Initial low alpha to guide the U-Net without ruining structure.
-
-    Returns:
-        alpha: base_alpha during structure building, smoothly rising to 1.0 via Cosine curve.
-    """
-    progress = step_idx / max(total_steps - 1, 1)
-    if progress <= style_start:
-        return base_alpha
-    
-    # Map post-style_start progress to [0, 1]
-    x = (progress - style_start) / (1.0 - style_start)
-    # Cosine interpolation from base_alpha to 1.0
-    return base_alpha + (1.0 - base_alpha) * 0.5 * (1.0 - math.cos(math.pi * x))
-
-
-def _inject_alpha(cond, alpha_value: float):
-    """Inject alpha into a conditioning dict. Pass-through for non-dict cond."""
-    if isinstance(cond, dict):
-        return {**cond, 'alpha': alpha_value}
-    return cond
 
 
 class CTFDDIMSampler(CustomDDIMSampler):
@@ -85,10 +50,11 @@ class CTFDDIMSampler(CustomDDIMSampler):
                ucg_schedule=None,
                global_strength=None,
                # CTF params
-               style_start=0.7,
+               layout_end=0.3,
+               content_end=0.6,
                **kwargs):
         """
-        Override sample() to pass style_start down to ddim_sampling.
+        Override sample() to pass CTF thresholds down to ddim_sampling.
         """
         # Validate conditioning batch size
         if conditioning is not None and isinstance(conditioning, dict):
@@ -122,7 +88,8 @@ class CTFDDIMSampler(CustomDDIMSampler):
             dynamic_threshold=dynamic_threshold,
             ucg_schedule=ucg_schedule,
             global_strength=global_strength,
-            style_start=style_start,
+            layout_end=layout_end,
+            content_end=content_end,
         )
         return samples, intermediates
 
@@ -138,9 +105,9 @@ class CTFDDIMSampler(CustomDDIMSampler):
                       unconditional_conditioning=None,
                       dynamic_threshold=None, ucg_schedule=None,
                       global_strength=None,
-                      style_start=0.7):
+                      layout_end=0.3, content_end=0.6):
         """
-        Custom DDIM sampling loop that injects alpha at each step.
+        Custom DDIM sampling loop for Temporal Proxy Prompt Swapping.
         """
         device = self.model.betas.device
         b = shape[0]
@@ -171,7 +138,7 @@ class CTFDDIMSampler(CustomDDIMSampler):
         )
         total_steps = timesteps if ddim_use_original_steps else timesteps.shape[0]
         print(f"Running CTF DDIM Sampling with {total_steps} timesteps, "
-              f"style_start={style_start}")
+              f"layout_end={layout_end}, content_end={content_end}")
 
         iterator = tqdm(time_range, desc='CTF DDIM', total=total_steps)
 
@@ -206,7 +173,8 @@ class CTFDDIMSampler(CustomDDIMSampler):
                 # CTF params
                 step_idx=i,
                 total_steps=total_steps,
-                style_start=style_start,
+                layout_end=layout_end,
+                content_end=content_end,
             )
 
             if callback:
@@ -229,24 +197,29 @@ class CTFDDIMSampler(CustomDDIMSampler):
                       unconditional_conditioning=None,
                       dynamic_threshold=None, global_strength=None,
                       # CTF params
-                      step_idx=0, total_steps=50, style_start=0.7):
+                      step_idx=0, total_steps=50, layout_end=0.3, content_end=0.6):
         """
-        Single DDIM denoising step with alpha injection.
-        Alpha is embedded into the cond dict so CTFUNetModel reads it.
+        Single DDIM denoising step with temporal proxy prompt swapping.
         """
         b, *_, device = *x.shape, x.device
-        alpha = alpha_schedule(step_idx, total_steps, style_start)
+        progress = step_idx / max(total_steps - 1, 1)
 
-        # Inject alpha into conditioning dicts
-        c_alpha = _inject_alpha(c, alpha)
-        # Unconditional always gets alpha=0 (no style routing) for proper CFG
-        uc_alpha = _inject_alpha(unconditional_conditioning, 0.0)
+        # Tráo đổi Prompt theo Mốc thời gian (Temporal Proxy Prompt Control)
+        if progress <= layout_end:
+            active_c = {'c_crossattn': c['c_layout']}
+            active_uc = {'c_crossattn': unconditional_conditioning['c_layout']} if unconditional_conditioning else None
+        elif progress <= content_end:
+            active_c = {'c_crossattn': c['c_content']}
+            active_uc = {'c_crossattn': unconditional_conditioning['c_content']} if unconditional_conditioning else None
+        else:
+            active_c = {'c_style_raw': c['c_style']}
+            active_uc = {'c_style_raw': unconditional_conditioning['c_style']} if unconditional_conditioning else None
 
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
-            model_output = self.model.apply_model(x, t, c_alpha, global_strength)
+            model_output = self.model.apply_model(x, t, active_c, global_strength)
         else:
-            model_t = self.model.apply_model(x, t, c_alpha, global_strength)
-            model_uncond = self.model.apply_model(x, t, uc_alpha, global_strength)
+            model_t = self.model.apply_model(x, t, active_c, global_strength)
+            model_uncond = self.model.apply_model(x, t, active_uc, global_strength)
             model_output = model_uncond + unconditional_guidance_scale * (model_t - model_uncond)
 
         # Predict epsilon

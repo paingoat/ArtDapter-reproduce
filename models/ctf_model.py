@@ -75,39 +75,23 @@ class ArtDaptedModelCTF(ArtDaptedModel):
 
     def apply_model(self, x_noisy, t, cond, *args, **kwargs):
         """
-        Build context_dict and forward through CTFUNetModel.
-
-        Supports two cond formats:
-          1. CTF dict: {'c_layout': [...], 'c_content': [...], 'c_style': [...], 'alpha': float}
-          2. Legacy dict: {'c_crossattn': [...]} → falls back to original ArtDaptedModel behavior
+        Temporal Proxy Prompt routing:
+        1. If Phase 1/2: cond has 'c_crossattn' (CLIP native) -> fed directly to UNet.
+        2. If Phase 3: cond has 'c_style_raw' (T5 raw) -> push through ArtDapter -> UNet.
         """
-        # Legacy fallback: original ArtDaptedModel behavior
-        if 'c_crossattn' in cond:
-            return super().apply_model(x_noisy, t, cond, *args, **kwargs)
-
-        # ── CTF mode ──────────────────────────────────────────────
-        layout  = torch.cat(cond['c_layout'], 1)    # (B, 77, 768) CLIP
-        content = torch.cat(cond['c_content'], 1)    # (B, 77, 768) CLIP
-        t5_raw  = torch.cat(cond['c_style'], 1)      # (B, T, 2048) T5 raw
-
-        # ArtDapter: translate T5 → CLIP-compatible space, time-conditioned
-        # t is the diffusion timestep — ArtDapter's TSC uses it to adapt
-        # style features based on the current noise level
-        style = self.artdapter(t5_raw, t)             # (B, 64, 768)
-
-        alpha = float(cond.get('alpha', 0.0))
-
-        context_dict = {
-            'layout':  layout,
-            'content': content,
-            'style':   style,
-            'alpha':   alpha,
-        }
-
-        # CTFUNetModel reads the dict and routes per block
-        return self.model.diffusion_model(
-            x=x_noisy, timesteps=t, context=context_dict
-        )
+        if 'c_style_raw' in cond:
+            # Phase 3: T5 -> ArtDapter
+            t5_raw = torch.cat(cond['c_style_raw'], 1)
+            style = self.artdapter(t5_raw, t)
+            return self.model.diffusion_model(x=x_noisy, timesteps=t, context=style)
+            
+        elif 'c_crossattn' in cond:
+            # Phase 1 & 2: Native CLIP
+            context = torch.cat(cond['c_crossattn'], 1)
+            return self.model.diffusion_model(x=x_noisy, timesteps=t, context=context)
+        
+        else:
+            raise ValueError(f"Unknown conditioning keys: {cond.keys()}")
 
     # ─────────────────────── CTF Conditioning ──────────────────
 
