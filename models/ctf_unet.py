@@ -97,26 +97,30 @@ class CTFUNetModel(UNetModel):
             if i in LAYOUT_IN:       # {1, 2} — 64×64 — Coarse: subject + position
                 ctx = layout
             elif i in BLEND_IN:      # {4, 5} — 32×32 — Spatial transition
-                # Let alpha determine if it's content-focused or style-focused
-                ctx = lerp(layout, content_ctx, 0.5) 
-            elif i in CONTENT_IN:    # {7, 8} — 16×16 — Full content/style detail
-                ctx = content_ctx
+                # Strictly NO STYLE in encoder, only layout and content
+                ctx = lerp(layout, content, 0.5) 
+            elif i in CONTENT_IN:    # {7, 8} — 16×16 — Object semantics
+                ctx = content
             else:
                 # Blocks without SpatialTransformer (context is ignored)
-                ctx = content_ctx
+                ctx = content
             h = module(h, emb, context=ctx)
             hs.append(h)
 
         # ── Bottleneck ────────────────────────────────────────────
-        h = self.middle_block(h, emb, content_ctx)  # Needs style to alter deep semantics
+        # Solidify content structure before decoding
+        h = self.middle_block(h, emb, content)
 
         # ── Decoder ──────────────────────────────────────────────
         for i, module in enumerate(self.output_blocks):
             h = torch.cat([h, hs.pop()], dim=1)
-            # Output blocks all receive the blended content/style
-            # if they have SpatialTransformer.
-            # Even if they don't, passing context is harmless
-            ctx = content_ctx
+            # Inject style primarily in the decoder
+            if i in BLEND_OUT:
+                # Medium resolution: blend style with lower intensity
+                ctx = lerp(content, style, alpha * 0.5)
+            else:
+                # High resolution / Style blocks: full style injection
+                ctx = content_ctx
             h = module(h, emb, ctx)
 
         h = h.type(x.dtype)

@@ -16,26 +16,34 @@ from ldm.modules.diffusionmodules.util import noise_like
 from .custom_ddim import CustomDDIMSampler
 
 
+import math
+
 def alpha_schedule(
     step_idx: int,
     total_steps: int,
     style_start: float = 0.7,
+    base_alpha: float = 0.15,
 ) -> float:
     """
-    Compute step-aware blend weight alpha ∈ [0, 1].
+    Compute step-aware blend weight alpha ∈ [0, 1] using Cosine interpolation.
 
     Args:
         step_idx:    Current step index (0 = start of denoising, total_steps-1 = end).
         total_steps: Total number of DDIM steps.
         style_start: Fraction of steps before style starts blending in (default 0.7).
+        base_alpha:  Initial low alpha to guide the U-Net without ruining structure.
 
     Returns:
-        alpha: 0.0 during structure building, rising to 1.0 during style application.
+        alpha: base_alpha during structure building, smoothly rising to 1.0 via Cosine curve.
     """
     progress = step_idx / max(total_steps - 1, 1)
-    if progress < style_start:
-        return 0.0
-    return (progress - style_start) / (1.0 - style_start)
+    if progress <= style_start:
+        return base_alpha
+    
+    # Map post-style_start progress to [0, 1]
+    x = (progress - style_start) / (1.0 - style_start)
+    # Cosine interpolation from base_alpha to 1.0
+    return base_alpha + (1.0 - base_alpha) * 0.5 * (1.0 - math.cos(math.pi * x))
 
 
 def _inject_alpha(cond, alpha_value: float):
