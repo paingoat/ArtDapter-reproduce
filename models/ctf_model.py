@@ -116,7 +116,8 @@ class ArtDaptedModelCTF(ArtDaptedModel):
         # Save first sample's decomposition for UI display
         self._last_decomposed = decomposed[0] if decomposed else {}
 
-        p1_prompts = [d['prompt1'] for d in decomposed]
+        # Ép P1 phải vẽ nháp xám (grayscale/blockout) để không phá hỏng Phase 3
+        p1_prompts = [d['prompt1'] + ", rough uncolored grayscale blockout, empty neutral background" for d in decomposed]
         p2_prompts = [d['prompt2'] for d in decomposed]
         p3_prompts = [d['prompt3'] for d in decomposed]
 

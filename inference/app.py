@@ -236,12 +236,16 @@ def render_sampling_options(container):
 
 	# CTF controls (Only visible in CTF mode)
 	if st.session_state.get('config_mode') == 'ctf':
-		sampling_options['style_start'] = col3.slider('Style Start', value=0.7, min_value=0.0, max_value=1.0, step=0.05,
-														 help='Fraction of steps before style injection begins')
-		sampling_options['show_stages'] = col3.checkbox('🔍 Show 3-Stage Progression', value=True,
+		st.markdown('**CTF Phase Thresholds (Temporal Proxy Prompt)**')
+		sampling_options['layout_end'] = st.slider('Phase 1: Layout End', value=0.20, min_value=0.0, max_value=0.5, step=0.05,
+														 help='Fraction of steps (0-1) where Phase 1 (Layout/Grayscale) ends. E.g. 0.2 means Step 0-10.')
+		sampling_options['content_end'] = st.slider('Phase 2: Content End', value=0.45, min_value=0.2, max_value=0.9, step=0.05,
+														 help='Fraction of steps where Phase 2 (Content Details) ends. Phase 3 (Style) runs after this.')
+		sampling_options['show_stages'] = st.checkbox('🔍 Show 3-Stage Progression', value=True,
 														 help='Extract and display intermediate layout and style blending stages from the generation loop.')
 	else:
-		sampling_options['style_start'] = 0.7
+		sampling_options['layout_end'] = 0.2
+		sampling_options['content_end'] = 0.45
 		sampling_options['show_stages'] = False
 
 	return sampling_options
@@ -282,7 +286,7 @@ def generate():
 	style_start = sampling_options.get('style_start', 0.7)
 	show_stages = sampling_options.get('show_stages', True)
 
-	# Check if model is CTF-capable
+		# Check if model is CTF-capable
 	is_ctf = hasattr(model, 'get_ctf_conditioning')
 
 	if is_ctf:
@@ -303,20 +307,6 @@ def generate():
 
 		ctf_sampler = CTFDDIMSampler(model)
 
-		intermediate_latents = {}
-		if show_stages:
-			# Calculate exact step indices based on progress (0 to S-1)
-			start_step_idx = int(sampling_steps * style_start)
-			mid_step_idx = int(sampling_steps * (1.0 + style_start) / 2)
-
-			def img_callback(pred_x0, i):
-				if i == start_step_idx:
-					intermediate_latents['stage1'] = pred_x0.clone()
-				elif i == mid_step_idx:
-					intermediate_latents['stage2'] = pred_x0.clone()
-		else:
-			img_callback = None
-
 		sample_kwargs = dict(
 			S=sampling_steps,
 			batch_size=sample_quantity,
@@ -326,16 +316,24 @@ def generate():
 			unconditional_conditioning=un_cond,
 			eta=ddim_eta,
 			verbose=False,
-			img_callback=img_callback
+			img_callback=None
 		)
+
+		# Retrieve exact options from sliders
+		layout_end = sampling_options.get('layout_end', 0.2)
+		content_end = sampling_options.get('content_end', 0.45)
 
 		# Perform entire CTF sampling in one go
 		with status_placeholder, st.spinner('🎨 CTF sampling...'):
-			artdapted_z_samples, _ = ctf_sampler.sample(**sample_kwargs, style_start=style_start)
+			artdapted_z_samples, intermediates = ctf_sampler.sample(
+				**sample_kwargs, 
+				layout_end=layout_end, 
+				content_end=content_end
+			)
 
-		if show_stages and 'stage1' in intermediate_latents and 'stage2' in intermediate_latents:
-			st.session_state['ctf_stage1_outputs'] = decode_to_numpy(intermediate_latents['stage1'], model)
-			st.session_state['ctf_stage2_outputs'] = decode_to_numpy(intermediate_latents['stage2'], model)
+		if show_stages and 'stage_structure' in intermediates and 'stage_content' in intermediates:
+			st.session_state['ctf_stage1_outputs'] = decode_to_numpy(intermediates['stage_structure'], model)
+			st.session_state['ctf_stage2_outputs'] = decode_to_numpy(intermediates['stage_content'], model)
 		else:
 			st.session_state.pop('ctf_stage1_outputs', None)
 			st.session_state.pop('ctf_stage2_outputs', None)
@@ -393,22 +391,22 @@ def render_ctf_debug_panel(container):
 		if 'ctf_stage1_outputs' in st.session_state and 'ctf_stage2_outputs' in st.session_state and 'artdapted_outputs' in st.session_state:
 			st.markdown('---')
 			st.markdown('#### 📈 Generation Progression')
-			st.caption('Tiến trình mọc chi tiết (Structure -> Mid-Style -> Final)')
+			st.caption('Tiến trình Temporal Proxy Prompt (Pha 1 → Pha 2 → Pha 3)')
 
 			stage_cols = st.columns(3)
 			
 			with stage_cols[0]:
-				st.markdown('**Stage 1: Structure (Pencil Sketch, α = 0)**')
+				st.markdown('**Phase 1: Layout (Grayscale/Blockout)**')
 				for img in st.session_state['ctf_stage1_outputs']:
 					st.image(img, use_container_width=True)
 			
 			with stage_cols[1]:
-				st.markdown('**Stage 2: Mid-Style (Underpainting, α = 0.5)**')
+				st.markdown('**Phase 2: Content (Details added)**')
 				for img in st.session_state['ctf_stage2_outputs']:
 					st.image(img, use_container_width=True)
 					
 			with stage_cols[2]:
-				st.markdown('**Stage 3: Final Output (α = 1.0)**')
+				st.markdown('**Phase 3: Final Art Style**')
 				for img in st.session_state['artdapted_outputs']:
 					st.image(img, use_container_width=True)
 
