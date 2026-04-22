@@ -1,9 +1,13 @@
 import os
+import sys
 from pathlib import Path
 from random import choice
 from contextlib import contextmanager
 
 CUR_DIR = Path(os.path.dirname(os.path.realpath(__file__)))
+PROJECT_ROOT = CUR_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+	sys.path.insert(0, str(PROJECT_ROOT))
 
 import torch
 import einops
