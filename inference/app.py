@@ -71,6 +71,9 @@ def check_state(key, value):
 
 
 def is_diff_model():
+	model_options = st.session_state.get('model_options')
+	if not model_options:
+		return True
 	return ('model' not in st.session_state) or \
 		not check_state('model_options_checkpoint',	model_options['checkpoint']) or \
 		not check_state('model_options_device',			model_options['device']) or \
@@ -150,6 +153,10 @@ def randomize_values():
 
 
 def load_model():
+	model_options = st.session_state.get('model_options')
+	if not model_options:
+		raise RuntimeError("Model options are not initialized. Please choose model options in sidebar.")
+
 	st.session_state.model_options_checkpoint =	model_options['checkpoint']
 	st.session_state.model_options_config =			st.session_state.config.model #model_options['model_config']
 	st.session_state.model_options_device =			model_options['device']
@@ -177,6 +184,7 @@ def render_model_options(container):
 		precision =			container.selectbox("Precision", ['16-mixed', '16-true', '16', 'bf16', 'bf16-true', 'bf16-mixed', 'transformer-engine-float16', '32-true', '32', '64-true', '64', 'transformer-engine']),
 		checkpoint =		container.selectbox("Checkpoint", sorted([str(c) for c in CUR_DIR.glob('../ckpt/trained/*.ckpt')], reverse=True))
 	)
+	st.session_state['model_options'] = model_options
 	return model_options
 
 
