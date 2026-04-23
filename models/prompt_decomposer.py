@@ -3,53 +3,86 @@ Prompt Decomposer — Phân rã prompt thành 3 cấp bậc qua LLM API.
 
 Workflow:
   1 lần gọi API duy nhất → JSON {"prompt1", "prompt2", "prompt3"}
-  - prompt1 (≤30 words): Spatial layout WITH key nouns, NO style
-  - prompt2 (≤50 words): Content — full objects/details, NO style
-  - prompt3 (≤100 words): Full — content + style + artistic principles
+  - prompt1: Keyword-style spatial layout cues (CLIP-friendly, ≤ ~40 CLIP tokens).
+  - prompt2: Keyword-style layout + full content (CLIP-friendly, ≤ ~60 CLIP tokens).
+  - prompt3: Natural-language description for T5 (style + PoA aware, ≤ ~100 words).
 
-Word limits đảm bảo P1/P2 nằm trong giới hạn 77 tokens của CLIP.
+P1/P2 được cắt cứng theo CLIP tokenizer thật (77 token limit) để không bị silently truncated
+khi đi vào SD v1.5 cross-attention.
 """
 import os
 import re
 import json
 import logging
 
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 logger = logging.getLogger(__name__)
 
+# CLIP tokenizer hard limit (v1.5 text encoder)
+CLIP_MAX_TOKENS = 77
+# Safety budgets (< 77 to leave headroom for BOS/EOS/padding variations)
+P1_TOKEN_BUDGET = 50
+P2_TOKEN_BUDGET = 65
+
 SYSTEM_PROMPT = """\
 You are an art prompt decomposer. From the given content + style + principles,
-return a JSON object with exactly 3 keys in ONE response:
+return a JSON object with exactly 3 keys in ONE response.
 
-"prompt1" (Spatial Layout & Minimal Structure, ≤ 30 words):
-  - Treat this as a rough geometric sketch or 3D gray-box blockout.
-  - KEEP the core subject nouns but STRIP AWAY all descriptive adjectives, materials (metal, glass), and colors.
-  - Describe ONLY the basic shapes, silhouettes, and WHERE they are positioned spatially.
-  - Include any compositional principles (e.g. radial balance, rule of thirds).
-  - Absolutely NO colors (e.g. blue, red), textures, glowing effects, lighting, or style words.
-  - Good: "A large circular machine centered in the frame, with straight lines radiating outward symmetrically from the middle."
-  - Bad: "A glowing blue metal jet turbine...", "vibrant colors...", "impressionist..."
+prompt1 and prompt2 target a CLIP text encoder, which reads best as SHORT,
+COMMA-SEPARATED KEYWORD PHRASES (not full sentences). prompt3 targets a T5
+encoder and may be a natural-language description.
 
-"prompt2" (Content, ≤ 50 words):
-  - Expand prompt1 with MORE detail about the subjects and scene.
-  - Add descriptive adjectives, actions, and secondary objects.
-  - Still NO style words, art movements, textures, or aesthetic references.
-  - Good: "A glowing high-tech spaceship hovering just above an old stone courtyard, engine exhaust blasting downward."
+"prompt1" (Spatial Layout, CLIP-friendly, ≤ 40 tokens):
+  - Output a COMMA-SEPARATED list of short phrases (2-5 words each).
+  - KEEP core subject nouns. STRIP all adjectives about material, color, lighting, mood, style.
+  - Focus on: subject nouns, positions, shapes, silhouettes, composition cues.
+  - Composition cues allowed: centered, symmetric, asymmetric, rule of thirds,
+    radial balance, diagonal, foreground, background, left, right, top, bottom.
+  - No colors, no textures, no lighting, no art-movement words, no adjectives of mood.
+  - Good: "circular machine, centered, symmetric, radial rays, frontal view"
+  - Bad : "A glowing blue turbine hovering dramatically in the center..."
 
-"prompt3" (Full, ≤ 100 words):
-  - Complete version: prompt2 content + art style + artistic principles, vivid and clean.
+"prompt2" (Layout + Content, CLIP-friendly, ≤ 60 tokens):
+  - Output a COMMA-SEPARATED list of short phrases.
+  - MUST RESTATE the same layout cues from prompt1 (so bố cục được giữ nguyên).
+  - Then ADD content nouns and descriptive adjectives (size, quantity, actions, secondary objects).
+  - Still NO style words, NO art-movement words, NO explicit lighting/mood adjectives.
+  - Good: "spaceship, hovering, stone courtyard, centered, symmetric, engine exhaust downward,
+           small figures, tall columns, foreground debris"
+  - Bad : "A cinematic dramatic scene of a glowing matte spaceship..."
+
+"prompt3" (Full description for T5, ≤ 100 words):
+  - Natural-language paragraph.
+  - Combine content (from prompt2) + art style + artistic principles vividly.
+  - Style words, textures, lighting, mood ARE encouraged here.
 
 Return ONLY: {"prompt1": "...", "prompt2": "...", "prompt3": "..."}
 No markdown, no extra keys.\
 """
 
-# Style words that should NOT appear in prompt1 or prompt2
+# Style / aesthetic words that should NOT appear in prompt1 or prompt2.
+# Broadened from original list — cover common traps LLM still falls into.
 _STYLE_PATTERN = re.compile(
-    r'\b(baroque|renaissance|impressionism|cubism|surrealism|pop art|'
-    r'art nouveau|ukiyo-e|watercolor|oil painting|brushstroke|impasto|'
-    r'chiaroscuro|vibrant|muted|pastel|dramatic lighting|ethereal|'
-    r'dreamlike|atmospheric|moody|stylized)\b',
+    r'\b('
+    # art movements
+    r'baroque|renaissance|impressionism|impressionist|expressionism|expressionist|'
+    r'cubism|cubist|surrealism|surrealist|pop art|art nouveau|ukiyo-e|'
+    r'romanticism|realism|minimalism|minimalist|abstract|abstract expressionism|'
+    r'art deco|fauvism|pointillism|symbolism|mannerism|rococo|'
+    # media / materials
+    r'watercolor|oil painting|oil paint|acrylic|gouache|tempera|ink wash|charcoal|'
+    r'pastel|sketch|lineart|line art|woodcut|etching|lithograph|'
+    # texture / brushwork
+    r'brushstroke|brushwork|impasto|painterly|stylized|textured|grainy|'
+    # lighting / mood / aesthetics
+    r'chiaroscuro|vibrant|muted|dramatic lighting|ethereal|dreamlike|atmospheric|'
+    r'moody|cinematic|matte|photoreal|photorealistic|hyperreal|hyperrealistic|'
+    r'neon|cyberpunk|steampunk|vintage|retro|noir'
+    r')\b',
     re.IGNORECASE,
 )
 
@@ -61,13 +94,85 @@ class PromptDecomposer:
     Args:
         api_key:  OpenAI API key (falls back to OPENAI_API_KEY env var).
         model:    LLM model name for decomposition.
+        clip_version: HF id for the CLIP tokenizer used to count tokens.
     """
 
-    def __init__(self, api_key: str = None, model: str = "gpt-4o-mini"):
-        self.client = OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY", ""))
+    def __init__(
+        self,
+        api_key: str = None,
+        model: str = "gpt-4o-mini",
+        clip_version: str = "openai/clip-vit-large-patch14",
+    ):
+        api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        self.client = OpenAI(api_key=api_key) if OpenAI is not None else None
         self.model = model
         self._cache: dict = {}
         self._last_decomposed: dict = {}  # last result for UI display
+
+        # Real CLIP tokenizer for accurate budget enforcement.
+        # Lazy-load lightweight tokenizer (no full model weights).
+        self._clip_tokenizer = None
+        self._clip_version = clip_version
+
+        if OpenAI is None:
+            logger.warning(
+                "openai package is not installed; PromptDecomposer will use fallback decomposition."
+            )
+
+    # ── Tokenizer helpers ─────────────────────────────────────────
+
+    def _get_clip_tokenizer(self):
+        if self._clip_tokenizer is None:
+            try:
+                from transformers import CLIPTokenizer
+                self._clip_tokenizer = CLIPTokenizer.from_pretrained(
+                    self._clip_version, clean_up_tokenization_spaces=True
+                )
+            except Exception as e:
+                logger.warning("Failed to load CLIP tokenizer (%s); fallback to word count.", e)
+                self._clip_tokenizer = False  # sentinel: disabled
+        return self._clip_tokenizer
+
+    def _count_clip_tokens(self, text: str) -> int:
+        """Return real CLIP token count (including special tokens) or word proxy."""
+        tok = self._get_clip_tokenizer()
+        if not tok:
+            # Rough proxy: ~1.3 tokens/word for English keyword lists
+            return int(len(text.split()) * 1.3)
+        return len(tok(text, add_special_tokens=True, truncation=False).input_ids)
+
+    def _truncate_to_clip(self, text: str, budget: int) -> str:
+        """
+        Hard-truncate text to fit within `budget` CLIP tokens.
+        Prefers cutting on comma boundaries to preserve phrase integrity.
+        """
+        tok = self._get_clip_tokenizer()
+        if not tok:
+            # fallback: word-based approximate cut
+            words = text.split()
+            approx = int(budget / 1.3)
+            return " ".join(words[:approx])
+
+        ids = tok(text, add_special_tokens=True, truncation=False).input_ids
+        if len(ids) <= budget:
+            return text
+
+        # Try to cut at last comma that keeps us under budget
+        parts = [p.strip() for p in text.split(",") if p.strip()]
+        kept = []
+        for p in parts:
+            candidate = ", ".join(kept + [p])
+            if len(tok(candidate, add_special_tokens=True, truncation=False).input_ids) > budget:
+                break
+            kept.append(p)
+        if kept:
+            return ", ".join(kept)
+        # No comma boundaries fit — fall back to hard token slice + decode
+        truncated_ids = ids[:budget]
+        try:
+            return tok.decode(truncated_ids, skip_special_tokens=True)
+        except Exception:
+            return text  # give up; caller will still be fine since CLIPEmbedder truncates again
 
     # ── Public API ────────────────────────────────────────────────
 
@@ -88,16 +193,25 @@ class PromptDecomposer:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
+        if self.client is None:
+            result = self._fallback(caption, art_style, PoA)
+            result = self._enforce_budgets(result)
+            self._last_decomposed = result
+            self._cache[cache_key] = result
+            return result
+
         user_input = self._format_user_input(caption, art_style, PoA)
 
         result = None
         for attempt in range(max_retries + 1):
-            stricter = (
-                " BE EXTREMELY STRICT: prompt1 must have ≤30 words. "
-                "Keep subject nouns but absolutely NO style/art-movement words."
-                if attempt > 0
-                else ""
-            )
+            stricter = ""
+            if attempt > 0:
+                stricter = (
+                    f" STRICT: prompt1 <= {P1_TOKEN_BUDGET} CLIP tokens, "
+                    f"prompt2 <= {P2_TOKEN_BUDGET} CLIP tokens. "
+                    "Use comma-separated keyword phrases. "
+                    "Absolutely NO style/art-movement/material/mood words in prompt1 or prompt2."
+                )
             try:
                 response = self.client.chat.completions.create(
                     model=self.model,
@@ -107,30 +221,40 @@ class PromptDecomposer:
                     ],
                     response_format={"type": "json_object"},
                     temperature=0.2,
-                    max_tokens=400,
+                    max_tokens=500,
                 )
                 result = json.loads(response.choices[0].message.content)
             except Exception as e:
                 logger.warning("LLM API call failed (attempt %d): %s", attempt, e)
                 continue
 
-            # Validate: prompt1 must be short + no style words
             p1 = result.get("prompt1", "")
-            p1_word_count = len(p1.split())
-            has_style = bool(_STYLE_PATTERN.search(p1))
+            p2 = result.get("prompt2", "")
+            p1_tokens = self._count_clip_tokens(p1)
+            p2_tokens = self._count_clip_tokens(p2)
+            has_style_p1 = bool(_STYLE_PATTERN.search(p1))
+            has_style_p2 = bool(_STYLE_PATTERN.search(p2))
 
-            if p1_word_count <= 35 and not has_style:
-                break  # valid result
+            ok = (
+                p1_tokens <= P1_TOKEN_BUDGET
+                and p2_tokens <= P2_TOKEN_BUDGET
+                and not has_style_p1
+                and not has_style_p2
+            )
+            if ok:
+                break
 
             logger.info(
-                "Retry %d: prompt1 has %d words / style_words=%s",
-                attempt, p1_word_count, has_style,
+                "Retry %d: p1=%d tok (style=%s) / p2=%d tok (style=%s)",
+                attempt, p1_tokens, has_style_p1, p2_tokens, has_style_p2,
             )
 
         if result is None:
-            # Fallback: use raw inputs directly
             logger.warning("All LLM attempts failed, using fallback decomposition")
             result = self._fallback(caption, art_style, PoA)
+
+        # Final safety: even if validation still failed, hard-truncate to fit CLIP.
+        result = self._enforce_budgets(result)
 
         self._last_decomposed = result
         self._cache[cache_key] = result
@@ -150,6 +274,19 @@ class PromptDecomposer:
 
     # ── Internal ──────────────────────────────────────────────────
 
+    def _enforce_budgets(self, result: dict) -> dict:
+        """Hard-truncate P1/P2 to their CLIP token budgets. P3 left untouched."""
+        p1 = result.get("prompt1", "") or ""
+        p2 = result.get("prompt2", "") or ""
+        p3 = result.get("prompt3", "") or ""
+        p1_cut = self._truncate_to_clip(p1, P1_TOKEN_BUDGET)
+        p2_cut = self._truncate_to_clip(p2, P2_TOKEN_BUDGET)
+        if p1_cut != p1:
+            logger.info("Truncated prompt1 to fit %d CLIP tokens.", P1_TOKEN_BUDGET)
+        if p2_cut != p2:
+            logger.info("Truncated prompt2 to fit %d CLIP tokens.", P2_TOKEN_BUDGET)
+        return {"prompt1": p1_cut, "prompt2": p2_cut, "prompt3": p3}
+
     @staticmethod
     def _format_user_input(caption: str, art_style: str, PoA: list) -> str:
         principles = "; ".join(p for p in PoA if p)
@@ -162,7 +299,6 @@ class PromptDecomposer:
     @staticmethod
     def _fallback(caption: str, art_style: str, PoA: list) -> dict:
         """Minimal fallback when LLM is unavailable."""
-        # P1 fallback: use caption directly (has nouns, no style)
         return {
             "prompt1": caption,
             "prompt2": caption,

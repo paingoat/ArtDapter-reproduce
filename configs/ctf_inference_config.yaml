@@ -32,7 +32,7 @@ model:
     use_ema: False
 
     # CTF-specific params
-    style_start: 0.7          # fraction of steps before style injection begins
+    style_start: 0.7          # legacy, kept for backward compat
     clip_version: "openai/clip-vit-large-patch14"
 
     artdapter_config:
@@ -84,3 +84,11 @@ model:
       target: ldm.modules.encoders.T5Embedder
       params:
         max_length: 512
+
+# CTF sampling defaults tuned for PoA (balance-focused) generation.
+# Consumed by inference/app.py -> CTFDDIMSampler.sample(...).
+ctf_sampling:
+  layout_end:        0.30   # Phase 1 ends (fraction of denoise steps)
+  content_end:       0.65   # Phase 2 ends
+  blend_window:      0.08   # half-width of cosine blend window around content_end
+  preserve_strength: 0.30   # SDEdit-lite anchor pull in Phase 3 (0 disables)

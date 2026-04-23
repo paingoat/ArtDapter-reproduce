@@ -65,10 +65,22 @@ class ArtDaptedModelCTF(ArtDaptedModel):
         """
         Encode P1/P2 via CLIP → (B, 77, 768) in native CLIP space.
         U-Net cross-attn was trained with CLIP space → perfect compatibility.
+
+        Safety: log a warning if any prompt exceeds the CLIP 77-token limit, so
+        silent truncation by CLIPEmbedder is visible during development.
         """
-        # Ensure CLIP is on same device as model
         if self.clip_encoder.device != self.device:
             self.clip_encoder = self.clip_encoder.to(self.device)
+
+        tok = getattr(self.decomposer, "_get_clip_tokenizer", lambda: None)()
+        if tok:
+            for i, p in enumerate(prompts):
+                n = len(tok(p, add_special_tokens=True, truncation=False).input_ids)
+                if n > 77:
+                    logger.warning(
+                        "CLIP prompt %d exceeds 77 tokens (%d) and will be truncated: %r",
+                        i, n, p[:80],
+                    )
         return self.clip_encoder(prompts)  # (B, 77, 768)
 
     # ─────────────────────── apply_model ────────────────────────
@@ -116,30 +128,27 @@ class ArtDaptedModelCTF(ArtDaptedModel):
         # Save first sample's decomposition for UI display
         self._last_decomposed = decomposed[0] if decomposed else {}
 
-        # P1: Bố cục không gian thô (Layout)
+        # P1: Layout cues cho CLIP (keyword-style, bounded by decomposer token budget)
         p1_prompts = [d['prompt1'] for d in decomposed]
-        
-        # P2: Nội dung thô cơ bản
+
+        # P2: Layout + content cues cho CLIP
         p2_prompts = [d['prompt2'] for d in decomposed]
-        
-        # P3: BẮT BUỘC nhúng tên Art Style vào cuối để đảm bảo T5 kích hoạt đúng phong cách
-        p3_prompts = []
-        for i, d in enumerate(decomposed):
-            style = art_styles[i]
-            p3_text = d['prompt3']
-            if style:
-                # Nếu GPT lỡ quên từ khoá style, ta nhồi lại vào cuối
-                if style.lower() not in p3_text.lower():
-                    p3_text += f", {style} style"
-            p3_prompts.append(p3_text)
+
+        # P3: STYLE-ONLY qua ArtDapter template (Prompt: None, Style + PoA điền đầy đủ).
+        # Lý do: ArtDapter được train trên CompArt với distribution template
+        # `Prompt: ... Style: ... Balance: ... Pattern: ...`, và có drop_caption_prob=0.5
+        # trong dataset -> `Prompt: None.` là on-distribution. Bỏ content khỏi P3 giúp
+        # tránh ArtDapter phải "gánh" semantic content (OOD), chỉ tập trung style + PoA.
+        empty_captions = [""] * len(captions)
+        p3_prompts = self.apply_prompt_template(empty_captions, art_styles, PoAs)
 
         # Print decomposition for debugging (visible in Kaggle/terminal output)
-        for i, d in enumerate(decomposed):
+        for i in range(len(decomposed)):
             print(f"\n{'='*60}")
-            print(f"🔍 CTF Decomposition (Sample {i}):")
-            print(f"  [P1] Layout : {p1_prompts[i]}")
-            print(f"  [P2] Content: {p2_prompts[i]}")
-            print(f"  [P3] Full   : {p3_prompts[i]}")
+            print(f"CTF Decomposition (Sample {i}):")
+            print(f"  [P1 CLIP]   Layout  : {p1_prompts[i]}")
+            print(f"  [P2 CLIP]   Content : {p2_prompts[i]}")
+            print(f"  [P3 T5]     StyleTpl: {p3_prompts[i]}")
             print(f"{'='*60}")
 
         cond_layout  = self.encode_clip(p1_prompts)              # (B, 77, 768)
@@ -151,18 +160,21 @@ class ArtDaptedModelCTF(ArtDaptedModel):
             c_layout  = [cond_layout],
             c_content = [cond_content],
             c_style   = [cond_style_raw],
-            alpha     = 0.0,    # will be updated by CTFDDIMSampler at each step
+            alpha     = 0.0,    # legacy field, sampler no longer relies on it
         )
 
     @torch.no_grad()
     def get_unconditional_conditioning(self, n: int) -> dict:
         """
         Unconditional conditioning for CFG.
-        Must have same dict structure as ctf conditioning.
+
+        - CLIP branch (layout/content): empty string, matches SD v1.5's null token.
+        - T5 branch (style): use ArtDaptedModel parent's full-template null prompt
+          so ArtDapter sees the same kind of input it was trained against.
         """
         empty_clip = self.encode_clip([""] * n)                  # (B, 77, 768)
-        # Empty T5 — use parent's cond_stage_model
-        empty_t5 = self.get_learned_conditioning([""] * n)       # (B, T, 2048)
+        # Use parent's template-based unconditional (all fields `None.`)
+        empty_t5 = ArtDaptedModel.get_unconditional_conditioning(self, n)  # (B, T, 2048)
         return dict(
             c_layout  = [empty_clip],
             c_content = [empty_clip],

@@ -240,17 +240,34 @@ def render_sampling_options(container):
 
 	# CTF controls (Only visible in CTF mode)
 	if st.session_state.get('config_mode') == 'ctf':
+		ctf_defaults = st.session_state.config.get('ctf_sampling', {}) if hasattr(st.session_state, 'config') else {}
+		default_layout      = float(ctf_defaults.get('layout_end',        0.30))
+		default_content     = float(ctf_defaults.get('content_end',       0.65))
+		default_blend       = float(ctf_defaults.get('blend_window',      0.08))
+		default_preserve    = float(ctf_defaults.get('preserve_strength', 0.30))
+
 		st.markdown('**CTF Phase Thresholds (Temporal Proxy Prompt)**')
-		sampling_options['layout_end'] = st.slider('Phase 1: Layout End', value=0.20, min_value=0.0, max_value=0.5, step=0.05,
-														 help='Fraction of steps (0-1) where Phase 1 (Layout/Grayscale) ends. E.g. 0.2 means Step 0-10.')
-		sampling_options['content_end'] = st.slider('Phase 2: Content End', value=0.45, min_value=0.2, max_value=0.9, step=0.05,
-														 help='Fraction of steps where Phase 2 (Content Details) ends. Phase 3 (Style) runs after this.')
-		sampling_options['show_stages'] = st.checkbox('🔍 Show 3-Stage Progression', value=True,
-														 help='Extract and display intermediate layout and style blending stages from the generation loop.')
+		sampling_options['layout_end'] = st.slider(
+			'Phase 1: Layout End', value=default_layout, min_value=0.0, max_value=0.5, step=0.05,
+			help='Fraction of steps where Phase 1 (CLIP Layout) ends.')
+		sampling_options['content_end'] = st.slider(
+			'Phase 2: Content End', value=default_content, min_value=0.2, max_value=0.9, step=0.05,
+			help='Fraction of steps where Phase 2 (CLIP Content) ends. Phase 3 (Style via ArtDapter) runs after.')
+		sampling_options['blend_window'] = st.slider(
+			'Blend Window (half-width)', value=default_blend, min_value=0.0, max_value=0.20, step=0.01,
+			help='Cosine cross-fade window around Content End. In window, both content and style branches run (~2x cost).')
+		sampling_options['preserve_strength'] = st.slider(
+			'Preserve Content Anchor', value=default_preserve, min_value=0.0, max_value=0.60, step=0.05,
+			help='SDEdit-lite pull toward the Phase-2 content latent during Phase 3. Higher = layout stays more fixed.')
+		sampling_options['show_stages'] = st.checkbox(
+			'Show 3-Stage Progression', value=True,
+			help='Extract and display intermediate layout/content/style stages.')
 	else:
-		sampling_options['layout_end'] = 0.2
-		sampling_options['content_end'] = 0.45
-		sampling_options['show_stages'] = False
+		sampling_options['layout_end']        = 0.30
+		sampling_options['content_end']       = 0.65
+		sampling_options['blend_window']      = 0.08
+		sampling_options['preserve_strength'] = 0.30
+		sampling_options['show_stages']       = False
 
 	return sampling_options
 
@@ -324,15 +341,18 @@ def generate():
 		)
 
 		# Retrieve exact options from sliders
-		layout_end = sampling_options.get('layout_end', 0.2)
-		content_end = sampling_options.get('content_end', 0.45)
+		layout_end        = sampling_options.get('layout_end',        0.30)
+		content_end       = sampling_options.get('content_end',       0.65)
+		blend_window      = sampling_options.get('blend_window',      0.08)
+		preserve_strength = sampling_options.get('preserve_strength', 0.30)
 
-		# Perform entire CTF sampling in one go
-		with status_placeholder, st.spinner('🎨 CTF sampling...'):
+		with status_placeholder, st.spinner('CTF sampling...'):
 			artdapted_z_samples, intermediates = ctf_sampler.sample(
-				**sample_kwargs, 
-				layout_end=layout_end, 
-				content_end=content_end
+				**sample_kwargs,
+				layout_end=layout_end,
+				content_end=content_end,
+				blend_window=blend_window,
+				preserve_strength=preserve_strength,
 			)
 
 		if show_stages and 'stage_structure' in intermediates and 'stage_content' in intermediates:
