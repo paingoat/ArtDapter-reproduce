@@ -123,7 +123,7 @@ class CTFUNetModel(UNetModel):
 
         # ── Decoder ──────────────────────────────────────────────
         for i, module in enumerate(self.output_blocks):
-            h = th.cat([h, hs.pop()], dim=1)
+            h = torch.cat([h, hs.pop()], dim=1)
             if i in LAYOUT_OUT:          # {3, 4, 5} — Bottom — Layout
                 ctx = layout
             elif i in CONTENT_OUT:       # {6, 7, 8} — Middle — Content (identity)
