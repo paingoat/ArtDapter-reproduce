@@ -160,24 +160,35 @@ class CrossAttention(nn.Module):
             nn.Dropout(dropout)
         )
 
-    def forward(self, x, context=None, mask=None):
+    def _attend_single(self, q, context, mask=None):
+        """Compute attention for a single context tensor. q is already projected."""
         h = self.heads
-
-        q = self.to_q(x)
-        context = default(context, x)
         k = self.to_k(context)
         v = self.to_v(context)
-
-        # Reshape to (batch, heads, seq_len, dim_head) for SDPA
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=h), (q, k, v))
-
-        # Use PyTorch's built-in scaled_dot_product_attention (memory-efficient, flash-aware)
+        q_r, k_r, v_r = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=h), (q, k, v))
         with torch.nn.attention.sdpa_kernel([torch.nn.attention.SDPBackend.FLASH_ATTENTION,
                                              torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION,
                                              torch.nn.attention.SDPBackend.MATH]):
-            out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+            out = F.scaled_dot_product_attention(q_r, k_r, v_r, attn_mask=mask)
+        return rearrange(out, 'b h n d -> b n (h d)')
 
-        out = rearrange(out, 'b h n d -> b n (h d)')
+    def forward(self, x, context=None, mask=None):
+        q = self.to_q(x)
+
+        # ── Score-level blending: context is list of (tensor, weight) ──
+        if isinstance(context, list) and len(context) > 0 and isinstance(context[0], (tuple, list)):
+            blended = None
+            for ctx_tensor, weight in context:
+                out_i = self._attend_single(q, ctx_tensor, mask)
+                if blended is None:
+                    blended = weight * out_i
+                else:
+                    blended = blended + weight * out_i
+            return self.to_out(blended)
+
+        # ── Standard path (single tensor or self-attention) ──
+        context = default(context, x)
+        out = self._attend_single(q, context, mask)
         return self.to_out(out)
 
 
@@ -200,14 +211,12 @@ class MemoryEfficientCrossAttention(nn.Module):
         self.to_out = nn.Sequential(nn.Linear(inner_dim, query_dim), nn.Dropout(dropout))
         self.attention_op: Optional[Any] = None
 
-    def forward(self, x, context=None, mask=None):
-        q = self.to_q(x)
-        context = default(context, x)
+    def _attend_single_xf(self, q, context):
+        """Compute xformers attention for a single context tensor. q is already projected."""
         k = self.to_k(context)
         v = self.to_v(context)
-
         b, _, _ = q.shape
-        q, k, v = map(
+        q_r, k_r, v_r = map(
             lambda t: t.unsqueeze(3)
             .reshape(b, t.shape[1], self.heads, self.dim_head)
             .permute(0, 2, 1, 3)
@@ -215,18 +224,34 @@ class MemoryEfficientCrossAttention(nn.Module):
             .contiguous(),
             (q, k, v),
         )
-
-        # actually compute the attention, what we cannot get enough of
-        out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=None, op=self.attention_op)
-
-        if exists(mask):
-            raise NotImplementedError
+        out = xformers.ops.memory_efficient_attention(q_r, k_r, v_r, attn_bias=None, op=self.attention_op)
         out = (
             out.unsqueeze(0)
             .reshape(b, self.heads, out.shape[1], self.dim_head)
             .permute(0, 2, 1, 3)
             .reshape(b, out.shape[1], self.heads * self.dim_head)
         )
+        return out
+
+    def forward(self, x, context=None, mask=None):
+        q = self.to_q(x)
+
+        # ── Score-level blending: context is list of (tensor, weight) ──
+        if isinstance(context, list) and len(context) > 0 and isinstance(context[0], (tuple, list)):
+            blended = None
+            for ctx_tensor, weight in context:
+                out_i = self._attend_single_xf(q, ctx_tensor)
+                if blended is None:
+                    blended = weight * out_i
+                else:
+                    blended = blended + weight * out_i
+            return self.to_out(blended)
+
+        # ── Standard path ──
+        context = default(context, x)
+        if exists(mask):
+            raise NotImplementedError
+        out = self._attend_single_xf(q, context)
         return self.to_out(out)
 
 
@@ -306,10 +331,28 @@ class SpatialTransformer(nn.Module):
             self.proj_out = zero_module(nn.Linear(in_channels, inner_dim))
         self.use_linear = use_linear
 
+    def _is_blend_list(self, context):
+        """Check if context is a score-blending list of (tensor, weight) tuples."""
+        if not isinstance(context, list) or len(context) == 0:
+            return False
+        return isinstance(context[0], (tuple, list))
+
     def forward(self, x, context=None):
         # note: if no context is given, cross-attention defaults to self-attention
-        if not isinstance(context, list):
-            context = [context]
+        #
+        # Context formats:
+        #   1. None or Tensor → single context for all blocks
+        #   2. list of Tensors → one context per transformer_block (multi-depth)
+        #   3. list of (Tensor, weight) tuples → score-blending, broadcast to all blocks
+        is_blend = self._is_blend_list(context)
+        if is_blend:
+            # Score-blending: pass the entire list to every transformer block
+            context_per_block = [context] * len(self.transformer_blocks)
+        elif not isinstance(context, list):
+            context_per_block = [context] * len(self.transformer_blocks)
+        else:
+            context_per_block = context
+
         b, c, h, w = x.shape
         x_in = x
         x = self.norm(x)
@@ -319,7 +362,7 @@ class SpatialTransformer(nn.Module):
         if self.use_linear:
             x = self.proj_in(x)
         for i, block in enumerate(self.transformer_blocks):
-            x = block(x, context=context[i])
+            x = block(x, context=context_per_block[i])
         if self.use_linear:
             x = self.proj_out(x)
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w).contiguous()
