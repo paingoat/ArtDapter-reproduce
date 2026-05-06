@@ -3,7 +3,8 @@ ArtDaptedModelCTF — Coarse-to-Fine variant of ArtDaptedModel.
 
 Dual encoding strategy:
   - P1/P2 → CLIP encoder (native CLIP space, compatible with SD v1.5 U-Net)
-  - P3 → T5 encoder (cond_stage_model) → ArtDapter (translates T5 → CLIP space)
+  - P3 → T5 encoder (cond_stage_model) on Regular `apply_prompt_template` text
+    (not LLM prompt3) → ArtDapter (translates T5 → CLIP space)
 
 The conditioning dict format:
   {
@@ -134,13 +135,11 @@ class ArtDaptedModelCTF(ArtDaptedModel):
         # P2: Layout + content cues cho CLIP
         p2_prompts = [d['prompt2'] for d in decomposed]
 
-        # P3: STYLE-ONLY qua ArtDapter template (Prompt: None, Style + PoA điền đầy đủ).
-        # Lý do: ArtDapter được train trên CompArt với distribution template
-        # `Prompt: ... Style: ... Balance: ... Pattern: ...`, và có drop_caption_prob=0.5
-        # trong dataset -> `Prompt: None.` là on-distribution. Bỏ content khỏi P3 giúp
-        # tránh ArtDapter phải "gánh" semantic content (OOD), chỉ tập trung style + PoA.
-        empty_captions = [""] * len(captions)
-        p3_prompts = self.apply_prompt_template(empty_captions, art_styles, PoAs)
+        # P3 → T5: cùng template Regular (caption + style + PoA gốc). Không dùng prompt3
+        # từ LLM — P1/P2 (CLIP) đã gánh layout/content; T5 nhận đúng chuỗi như ArtDaptedModel.
+        p3_prompts = self.apply_prompt_template(captions, art_styles, PoAs)
+        # First-sample T5 string for Streamlit debug panel (not from LLM prompt3)
+        self._last_t5_style_prompt = p3_prompts[0] if p3_prompts else ""
 
         # Print decomposition for debugging (visible in Kaggle/terminal output)
         for i in range(len(decomposed)):
@@ -148,7 +147,7 @@ class ArtDaptedModelCTF(ArtDaptedModel):
             print(f"CTF Decomposition (Sample {i}):")
             print(f"  [P1 CLIP]   Layout  : {p1_prompts[i]}")
             print(f"  [P2 CLIP]   Content : {p2_prompts[i]}")
-            print(f"  [P3 T5]     StyleTpl: {p3_prompts[i]}")
+            print(f"  [P3 T5]     Regular template (not LLM prompt3): {p3_prompts[i]}")
             print(f"{'='*60}")
 
         cond_layout  = self.encode_clip(p1_prompts)              # (B, 77, 768)

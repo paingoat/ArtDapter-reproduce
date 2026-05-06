@@ -417,7 +417,11 @@ def render_ctf_debug_panel(container):
 		c1, c2, c3 = st.columns(3)
 		c1.info(f"**P1 — Spatial Layout:**\n\n{p.get('prompt1', '')}")
 		c2.success(f"**P2 — Content:**\n\n{p.get('prompt2', '')}")
-		c3.warning(f"**P3 — Full + Style:**\n\n{p.get('prompt3', '')}")
+		m = st.session_state.get('model')
+		t5_tpl = getattr(m, '_last_t5_style_prompt', '') if m is not None else ''
+		c3.warning(
+			f"**P3 — T5 (Regular template, not LLM prompt3):**\n\n{t5_tpl}"
+		)
 
 		# 3-Stage Progression Visualization
 		if 'ctf_stage1_outputs' in st.session_state and 'ctf_stage2_outputs' in st.session_state and 'artdapted_outputs' in st.session_state:

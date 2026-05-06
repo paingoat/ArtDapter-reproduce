@@ -120,4 +120,5 @@ Nếu bạn chạy trong notebook environment (Kaggle), **không dùng luồng P
 
 - Pod/RTX 5090: `md/pod_guide.md`
 - Kaggle notebook: `md/kaggle_guide.md`
+- Inference từ đầu (weights HF + Streamlit): `md/inference_setup.md`
 

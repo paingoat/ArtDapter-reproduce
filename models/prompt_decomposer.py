@@ -1,11 +1,12 @@
 """
-Prompt Decomposer — Phân rã prompt thành 3 cấp bậc qua LLM API.
+Prompt Decomposer — Phân rã prompt qua LLM API cho nhánh CLIP (CTF / tương thích).
 
 Workflow:
-  1 lần gọi API duy nhất → JSON {"prompt1", "prompt2", "prompt3"}
+  1 lần gọi API → JSON {"prompt1", "prompt2", "prompt3"}
   - prompt1: Keyword-style spatial layout cues (CLIP-friendly, ≤ ~40 CLIP tokens).
   - prompt2: Keyword-style layout + full content (CLIP-friendly, ≤ ~60 CLIP tokens).
-  - prompt3: Natural-language description for T5 (style + PoA aware, ≤ ~100 words).
+  - prompt3: Chỉ giữ key trong JSON; luôn rỗng — T5/ArtDapter không đọc field này;
+    chuỗi style cho T5 được ghép bằng apply_prompt_template(caption, style, PoA) giống Regular.
 
 P1/P2 được cắt cứng theo CLIP tokenizer thật (77 token limit) để không bị silently truncated
 khi đi vào SD v1.5 cross-attention.
@@ -32,9 +33,10 @@ SYSTEM_PROMPT = """\
 You are an art prompt decomposer. From the given content + style + principles,
 return a JSON object with exactly 3 keys in ONE response.
 
-prompt1 and prompt2 target a CLIP text encoder, which reads best as SHORT,
-COMMA-SEPARATED KEYWORD PHRASES (not full sentences). prompt3 targets a T5
-encoder and may be a natural-language description.
+Only prompt1 and prompt2 are used from your reply (both go to a CLIP text encoder).
+They must be SHORT, COMMA-SEPARATED KEYWORD PHRASES (not full sentences).
+Style / art-movement / lighting / mood belong in the user's inputs and in the
+server-side T5 template — do NOT try to supply T5 text in prompt3.
 
 "prompt1" (Spatial Layout, CLIP-friendly, ≤ 40 tokens):
   - Output a COMMA-SEPARATED list of short phrases (2-5 words each).
@@ -55,12 +57,11 @@ encoder and may be a natural-language description.
            small figures, tall columns, foreground debris"
   - Bad : "A cinematic dramatic scene of a glowing matte spaceship..."
 
-"prompt3" (Full description for T5, ≤ 100 words):
-  - Natural-language paragraph.
-  - Combine content (from prompt2) + art style + artistic principles vividly.
-  - Style words, textures, lighting, mood ARE encouraged here.
+"prompt3":
+  - Must be exactly: "" (empty string). The key is required for JSON schema only.
+  - Do not write prose, summaries, or style paragraphs here.
 
-Return ONLY: {"prompt1": "...", "prompt2": "...", "prompt3": "..."}
+Return ONLY: {"prompt1": "...", "prompt2": "...", "prompt3": ""}
 No markdown, no extra keys.\
 """
 
@@ -89,7 +90,10 @@ _STYLE_PATTERN = re.compile(
 
 class PromptDecomposer:
     """
-    Decomposes a full art prompt into 3 hierarchical sub-prompts via LLM API.
+    Decomposes a full art prompt into CLIP-oriented sub-prompts (P1/P2) via LLM API.
+
+    The response JSON still includes ``prompt3`` (always empty) for schema compatibility;
+    T5/style text is built on the server with ``apply_prompt_template``, not from the LLM.
 
     Args:
         api_key:  OpenAI API key (falls back to OPENAI_API_KEY env var).
@@ -187,7 +191,7 @@ class PromptDecomposer:
         Decompose a single prompt into 3 hierarchical variants.
 
         Returns:
-            {"prompt1": str, "prompt2": str, "prompt3": str}
+            {"prompt1": str, "prompt2": str, "prompt3": str}  # prompt3 unused; forced ""
         """
         cache_key = (caption, art_style, tuple(PoA))
         if cache_key in self._cache:
@@ -275,17 +279,16 @@ class PromptDecomposer:
     # ── Internal ──────────────────────────────────────────────────
 
     def _enforce_budgets(self, result: dict) -> dict:
-        """Hard-truncate P1/P2 to their CLIP token budgets. P3 left untouched."""
+        """Hard-truncate P1/P2 to their CLIP token budgets. prompt3 is unused; force empty."""
         p1 = result.get("prompt1", "") or ""
         p2 = result.get("prompt2", "") or ""
-        p3 = result.get("prompt3", "") or ""
         p1_cut = self._truncate_to_clip(p1, P1_TOKEN_BUDGET)
         p2_cut = self._truncate_to_clip(p2, P2_TOKEN_BUDGET)
         if p1_cut != p1:
             logger.info("Truncated prompt1 to fit %d CLIP tokens.", P1_TOKEN_BUDGET)
         if p2_cut != p2:
             logger.info("Truncated prompt2 to fit %d CLIP tokens.", P2_TOKEN_BUDGET)
-        return {"prompt1": p1_cut, "prompt2": p2_cut, "prompt3": p3}
+        return {"prompt1": p1_cut, "prompt2": p2_cut, "prompt3": ""}
 
     @staticmethod
     def _format_user_input(caption: str, art_style: str, PoA: list) -> str:
@@ -302,5 +305,5 @@ class PromptDecomposer:
         return {
             "prompt1": caption,
             "prompt2": caption,
-            "prompt3": f"{caption}. {art_style}. " + " ".join(p for p in PoA if p),
+            "prompt3": "",
         }
