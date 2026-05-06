@@ -26,7 +26,35 @@ cd ArtDapter
 
 ---
 
-## 3. Môi trường Conda (khuyến nghị)
+## 3. Đường dẫn lưu dữ liệu mặc định: `/workspace/data`
+
+Toàn bộ dữ liệu “nặng” (cache Hugging Face, checkpoint tải về, snapshot HF) nên gom về **`/workspace/data`** để dễ backup và tránh đầy ổ gốc repo (đặc biệt trên RunPod / container có volume `/workspace`).
+
+```bash
+export DATA_ROOT=/workspace/data
+mkdir -p "$DATA_ROOT"/{hf_hub,hf_downloads,ckpt/trained}
+```
+
+| Vị trí | Mục đích |
+|--------|----------|
+| `$DATA_ROOT/hf_hub` | Cache model/tokenizer (đặt `HF_HOME` trỏ vào đây, xem mục 7). |
+| `$DATA_ROOT/hf_downloads` | Thư mục `--local-dir` khi gọi `huggingface-cli download` (mục 5). |
+| `$DATA_ROOT/ckpt/trained` | Lưu file `.ckpt` inference. |
+
+**Liên kết tới repo** để Streamlit vẫn đọc được `ckpt/trained/*.ckpt` trong project (đường dẫn tương đối cố định trong app):
+
+```bash
+# Trong thư mục gốc ArtDapter, sau khi đã mkdir ckpt trong repo (hoặc chỉ cần thư mục cha)
+rm -rf ckpt/trained 2>/dev/null || true
+mkdir -p ckpt
+ln -sfn "$DATA_ROOT/ckpt/trained" ckpt/trained
+```
+
+Trên máy **không** có `/workspace` (ví dụ Windows local), có thể đặt `DATA_ROOT` tới ổ dữ liệu của bạn (ví dụ `D:\ArtDapterData`) và giữ nguyên logic symlink / biến môi trường tương tự.
+
+---
+
+## 4. Môi trường Conda (khuyến nghị)
 
 File gốc: [`environment.yaml`](../environment.yaml) — tạo env tên `artgen`:
 
@@ -40,15 +68,16 @@ Nếu conda báo lỗi ToS kênh mặc định, tham khảo [`control/setup_env.
 ### Gói pip bổ sung cho inference
 
 - **`openai`**: chế độ **CTF** gọi API phân rã prompt (`PromptDecomposer`). Nếu không cài, code fallback (chất lượng kém hơn).
-- **`huggingface_hub`**: tiện tải checkpoint từ Hugging Face (CLI `huggingface-cli`).
+- **`huggingface_hub`**: CLI `hf` (tải model) và thư viện Hub.
+- **`python-dotenv`**: đọc file `.env` ở thư mục gốc repo khi chạy Streamlit (đã khai báo trong [`environment.yaml`](../environment.yaml)).
 
 ```bash
-pip install "openai>=1.0.0" "huggingface_hub>=0.20.0"
+pip install "openai>=1.0.0" "huggingface_hub>=0.20.0" "python-dotenv>=1.0.0"
 ```
 
 ---
 
-## 4. Tải weights từ Hugging Face
+## 5. Tải weights từ Hugging Face
 
 Repo model: **[paingoat/artdapter-v1](https://huggingface.co/paingoat/artdapter-v1/tree/main)**.
 
@@ -57,20 +86,23 @@ Repo model: **[paingoat/artdapter-v1](https://huggingface.co/paingoat/artdapter-
 Đăng nhập **không bắt buộc** nếu repo public; nếu cần token:
 
 ```bash
-huggingface-cli login
+hf auth login
 ```
 
-Tải file checkpoint trong `trained/` về thư mục tạm rồi copy vào repo:
+(`huggingface-cli` đã deprecated; dùng lệnh `hf`.)
+
+Tải file checkpoint trong `trained/` về **`$DATA_ROOT/hf_downloads`** rồi copy vào **`$DATA_ROOT/ckpt/trained`** (đã symlink `ckpt/trained` trong repo như mục 3):
 
 ```bash
-# Ví dụ: tải cả snapshot (có thể ~15 GB — kiểm tra dung lượng trên trang HF)
-huggingface-cli download paingoat/artdapter-v1 \
-  --include "trained/*.ckpt" \
-  --local-dir ./hf_artdapter_v1
+export DATA_ROOT=/workspace/data
+mkdir -p "$DATA_ROOT/hf_downloads" "$DATA_ROOT/ckpt/trained"
 
-# Đặt checkpoint vào đúng chỗ app đọc
-mkdir -p ckpt/trained
-cp hf_artdapter_v1/trained/*.ckpt ckpt/trained/
+# Ví dụ: tải snapshot (có thể ~15 GB — kiểm tra dung lượng trên trang HF)
+hf download paingoat/artdapter-v1 \
+  --include "trained/*.ckpt" \
+  --local-dir "$DATA_ROOT/hf_downloads/hf_artdapter_v1"
+
+cp "$DATA_ROOT/hf_downloads/hf_artdapter_v1/trained/"*.ckpt "$DATA_ROOT/ckpt/trained/"
 ```
 
 Nếu có **nhiều** file `.ckpt`, giữ ít nhất một file; sidebar Streamlit liệt kê mọi file trong `ckpt/trained/*.ckpt`.
@@ -79,11 +111,11 @@ Nếu có **nhiều** file `.ckpt`, giữ ít nhất một file; sidebar Streaml
 
 1. Mở [Files · paingoat/artdapter-v1](https://huggingface.co/paingoat/artdapter-v1/tree/main).
 2. Vào thư mục `trained/`, tải file `.ckpt`.
-3. Đặt file vào `ArtDapter/ckpt/trained/` (cùng cấp với thư mục `configs/`, `inference/`, …).
+3. Đặt file vào **`/workspace/data/ckpt/trained/`** (hoặc `ArtDapter/ckpt/trained/` nếu bạn không dùng symlink — cùng cấp với `configs/`, `inference/`, …).
 
 ---
 
-## 5. Cấu hình YAML (tuỳ chọn nhưng nên đồng bộ)
+## 6. Cấu hình YAML (tuỳ chọn nhưng nên đồng bộ)
 
 Streamlit **nạp trọng số** từ đường dẫn bạn chọn trong sidebar (**Checkpoint**), không đọc `model.init_path` trong YAML để load file. Tuy nhiên `init_path` trong config vẫn nên trỏ tới checkpoint thật để tránh nhầm khi dùng tool khác.
 
@@ -101,41 +133,74 @@ model:
 
 ---
 
-## 6. Biến môi trường
+## 7. Biến môi trường
 
 | Biến | Khi nào cần |
 |------|-------------|
+| `DATA_ROOT` | Quy ước gốc dữ liệu; mặc định tài liệu này dùng **`/workspace/data`** (mục 3). |
+| `HF_HOME` | **Khuyến nghị:** `$DATA_ROOT/hf_hub` để cache T5/CLIP và model HF nằm trên volume dữ liệu. |
+| `HF_DATASETS_CACHE` / `TRANSFORMERS_CACHE` | Tuỳ chọn: con của `HF_HOME` (ví dụ `$HF_HOME/datasets`, `$HF_HOME/transformers`) để tách thư mục. |
 | `OPENAI_API_KEY` | Bật **Pipeline Mode → ctf** và muốn phân rã prompt qua GPT (không dùng fallback). |
-| `HF_HOME` / `TRANSFORMERS_CACHE` | Tuỳ chọn: chỉ định cache Hugging Face nếu ổ hệ thống nhỏ. |
 
-Ví dụ Linux/macOS:
+Ví dụ Linux/macOS (mở shell trước khi tải weights và trước khi chạy Streamlit):
 
 ```bash
+export DATA_ROOT=/workspace/data
+export HF_HOME="$DATA_ROOT/hf_hub"
+export HF_DATASETS_CACHE="$HF_HOME/datasets"
+export TRANSFORMERS_CACHE="$HF_HOME/transformers"
+mkdir -p "$HF_HOME" "$HF_DATASETS_CACHE" "$TRANSFORMERS_CACHE"
+
 export OPENAI_API_KEY="sk-..."
 ```
 
-PowerShell:
+PowerShell (chỉnh ổ nếu không có `/workspace`):
 
 ```powershell
+$env:DATA_ROOT = "/workspace/data"
+$env:HF_HOME = "$env:DATA_ROOT/hf_hub"
+$env:HF_DATASETS_CACHE = "$env:HF_HOME/datasets"
+$env:TRANSFORMERS_CACHE = "$env:HF_HOME/transformers"
 $env:OPENAI_API_KEY = "sk-..."
 ```
 
+### File `.env` (thư mục gốc repo, cùng cấp với `configs/`)
+
+Đặt file **`.env`** tại `ArtDapter/.env` (không phải trong `inference/`). Khi chạy `streamlit run inference/app.py`, app gọi `load_dotenv()` để nạp biến trước khi model dùng OpenAI.
+
+Ví dụ (đường đầy đủ cho `HF_HOME` tránh lệ thuộc nội suy):
+
+```env
+DATA_ROOT=/workspace/data
+HF_HOME=/workspace/data/hf_hub
+OPENAI_API_KEY=sk-your-key-here
+```
+
+Nếu dùng `python-dotenv>=1.0` và muốn tham chiếu `DATA_ROOT` trong các dòng sau, có thể viết `HF_HOME=${DATA_ROOT}/hf_hub` tùy phiên bản; cách an toàn nhất là ghi đường dẫn tuyệt đối như trên.
+
+**Cài gói:** `pip install "python-dotenv>=1.0.0"` (hoặc `conda env update` từ `environment.yaml` sau khi đã thêm dependency).
+
 ---
 
-## 7. Chạy inference (Streamlit)
+## 8. Chạy inference (Streamlit)
 
 Luôn chạy từ **thư mục gốc repo**, với `PYTHONPATH` trỏ vào gốc project (để import `ldm`, `models`, `utils`).
 
 ### Linux / macOS / WSL
 
 ```bash
+export DATA_ROOT=/workspace/data
+export HF_HOME="$DATA_ROOT/hf_hub"
+export HF_DATASETS_CACHE="${HF_HOME}/datasets"
+export TRANSFORMERS_CACHE="${HF_HOME}/transformers"
+
 cd /đường/dẫn/ArtDapter
 conda activate artgen
 export PYTHONPATH=.
 streamlit run inference/app.py --server.port 8502 --server.address 0.0.0.0
 ```
 
-Hoặc dùng script có sẵn (Linux, **cần checkpoint trong `ckpt/trained/`**; script copy `pod_inference_config` sang `inference_config` và sửa `init_path` — chủ yếu phục vụ RunPod):
+Hoặc dùng script có sẵn (Linux, **cần checkpoint trong `ckpt/trained/`** — thường là symlink tới `$DATA_ROOT/ckpt/trained`; script copy `pod_inference_config` sang `inference_config` và sửa `init_path` — chủ yếu phục vụ RunPod):
 
 ```bash
 bash control/inference.sh
@@ -143,7 +208,7 @@ bash control/inference.sh
 bash control/inference.sh --ckpt ckpt/trained/your.ckpt
 ```
 
-Lưu ý: `control/inference.sh` dùng `sed -i` kiểu GNU; trên macOS có thể cần chỉnh hoặc cập nhật `init_path` thủ công như mục 5.
+Lưu ý: `control/inference.sh` dùng `sed -i` kiểu GNU; trên macOS có thể cần chỉnh hoặc cập nhật `init_path` thủ công như mục 6. Nếu dùng RunPod, có thể thêm các dòng `export HF_HOME=...` vào đầu phiên shell hoặc vào `~/.bashrc` cho khớp mục 3 và 7.
 
 ### Windows (PowerShell)
 
@@ -158,7 +223,7 @@ Mở trình duyệt: **http://localhost:8502** (hoặc cổng bạn chỉ địn
 
 ---
 
-## 8. Dùng giao diện
+## 9. Dùng giao diện
 
 1. **Sidebar — Model Options:** chọn GPU (`Cuda device`), precision (thường `16-mixed`), và **Checkpoint** (danh sách từ `ckpt/trained/*.ckpt`).
 2. **Pipeline Mode:**
@@ -170,7 +235,7 @@ Lần đầu chạy, **T5** và **CLIP** (và mô hình liên quan) có thể t�
 
 ---
 
-## 9. Xử lý sự cố thường gặp
+## 10. Xử lý sự cố thường gặp
 
 | Triệu chứng | Hướng xử lý |
 |-------------|-------------|
@@ -182,14 +247,15 @@ Lần đầu chạy, **T5** và **CLIP** (và mô hình liên quan) có thể t�
 
 ---
 
-## 10. Bản đồ file liên quan (tham chiếu nhanh)
+## 11. Bản đồ file liên quan (tham chiếu nhanh)
 
 | Thành phần | Đường dẫn |
 |-------------|-----------|
+| Gốc dữ liệu (mặc định) | `/workspace/data` — con: `hf_hub/`, `hf_downloads/`, `ckpt/trained/` |
 | App Streamlit | [`inference/app.py`](../inference/app.py) |
 | Config regular | [`configs/inference_config.yaml`](../configs/inference_config.yaml) |
 | Config CTF | [`configs/ctf_inference_config.yaml`](../configs/ctf_inference_config.yaml) |
-| Checkpoint inference | `ckpt/trained/*.ckpt` |
+| Checkpoint inference | `ckpt/trained/*.ckpt` trong repo (thường symlink → `/workspace/data/ckpt/trained/`) |
 | Môi trường conda | [`environment.yaml`](../environment.yaml) |
 | Chạy nhanh (Linux) | [`run_inference_app.sh`](../run_inference_app.sh), [`control/inference.sh`](../control/inference.sh) |
 

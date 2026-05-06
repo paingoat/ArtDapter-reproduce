@@ -9,6 +9,19 @@ PROJECT_ROOT = CUR_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
 	sys.path.insert(0, str(PROJECT_ROOT))
 
+# Load OPENAI_API_KEY, HF_HOME, etc. from project-root `.env` (Streamlit does not do this by default).
+try:
+	from dotenv import load_dotenv
+
+	_env_path = PROJECT_ROOT / ".env"
+	# python-dotenv>=1.0: interpolate expands e.g. HF_HOME="$DATA_ROOT/hf_hub"
+	try:
+		load_dotenv(_env_path, interpolate=True)
+	except TypeError:
+		load_dotenv(_env_path)
+except ImportError:
+	pass
+
 import torch
 import einops
 import streamlit as st

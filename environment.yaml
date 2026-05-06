@@ -46,6 +46,7 @@ dependencies:
 
       # Inference UI
       - streamlit>=1.30.0
+      - python-dotenv>=1.0.0
 
       # xformers: phải khớp ABI với PyTorch build — thử cài sau khi env tạo xong:
       #   pip install xformers --extra-index-url https://download.pytorch.org/whl/cu128
