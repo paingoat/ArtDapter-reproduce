@@ -234,8 +234,6 @@ def render_sampling_options(container):
 		sampling_options['ddim_eta'] = col3.number_input("η (DDIM)", value=0.)
 
 	# CTF controls
-	sampling_options['style_start'] = col3.slider('Style Start', value=0.7, min_value=0.0, max_value=1.0, step=0.05,
-													 help='Fraction of steps before style injection begins (CTF mode only)')
 	sampling_options['show_phase'] = col3.checkbox('🔍 Show Phase Analysis', value=True,
 													 help='Generate additional structure-only image (no style) for comparison. ~7s extra.')
 
@@ -274,7 +272,6 @@ def generate():
 	sampling_steps = sampling_options['steps']
 	ddim_eta = sampling_options.get('ddim_eta', 0.0)
 	cfg_scale = sampling_options['CFG_scale']
-	style_start = sampling_options.get('style_start', 0.7)
 	show_phase = sampling_options.get('show_phase', True)
 
 	# Check if model is CTF-capable
@@ -308,17 +305,17 @@ def generate():
 			verbose=False,
 		)
 
-		# Step 2: Phase 1 — Structure only (alpha=0 throughout)
+		# Step 2: Phase 1 — Structure only (no style, Upper blocks use content)
 		if show_phase:
 			with status_placeholder, st.spinner('📐 Phase 1 — Structure sampling (no style)...'):
-				z_phase1, _ = ctf_sampler.sample(**sample_kwargs, style_start=1.1)
+				z_phase1, _ = ctf_sampler.sample(**sample_kwargs, no_style=True)
 				st.session_state['ctf_phase1_outputs'] = decode_to_numpy(z_phase1, model)
 		else:
 			st.session_state.pop('ctf_phase1_outputs', None)
 
-		# Step 3: Phase 2 — Full CTF (style blended from style_start)
+		# Step 3: Phase 2 — Full CTF (style applied via ArtDapter)
 		with status_placeholder, st.spinner('🎨 Phase 2 — CTF sampling with style...'):
-			artdapted_z_samples, _ = ctf_sampler.sample(**sample_kwargs, style_start=style_start)
+			artdapted_z_samples, _ = ctf_sampler.sample(**sample_kwargs, no_style=False)
 
 	else:
 		# ── Original Pipeline (backward compatible) ────────────
@@ -370,7 +367,7 @@ def render_ctf_debug_panel(container):
 
 		# Phase 1 images (structure only)
 		if 'ctf_phase1_outputs' in st.session_state:
-			st.markdown('#### 📐 Phase 1 — Structure Only (no style, α=0)')
+			st.markdown('#### 📐 Phase 1 — Structure Only (no style)')
 			st.caption('Kiểm tra: hình dáng vật thể đúng chưa? Bố cục radial/layout rõ chưa?')
 			cols = st.columns(len(st.session_state['ctf_phase1_outputs']))
 			for col, img in zip(cols, st.session_state['ctf_phase1_outputs']):
@@ -378,7 +375,7 @@ def render_ctf_debug_panel(container):
 
 		# Phase 2 images (final CTF)
 		if 'artdapted_outputs' in st.session_state:
-			st.markdown('#### 🎨 Phase 2 — Final CTF Output (style blended)')
+			st.markdown('#### 🎨 Phase 2 — Final CTF Output (ArtDapter style applied)')
 			st.caption('Kết quả cuối: style có giữ nguyên cấu trúc Phase 1 không?')
 			cols = st.columns(len(st.session_state['artdapted_outputs']))
 			for col, img in zip(cols, st.session_state['artdapted_outputs']):

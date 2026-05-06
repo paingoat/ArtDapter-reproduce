@@ -1,12 +1,12 @@
 """
-CTFDDIMSampler — Coarse-to-Fine DDIM Sampler with step-aware alpha scheduling.
+CTFDDIMSampler — Coarse-to-Fine DDIM Sampler.
 
-Injects 'alpha' into the conditioning dict at each denoising step so that
-CTFUNetModel can route context signals differently as denoising progresses.
+Simplified version: no alpha injection or score blending.
+Supports Phase Analysis via `no_style` flag in conditioning dict.
 
-Alpha schedule:
-  - Steps 0% – 70%:  alpha = 0  (layout/content dominate)
-  - Steps 70% – 100%: alpha rises 0 → 1  (style takes over)
+Phase Analysis modes:
+  - no_style=True  → Upper blocks use content (structure only, no artistic style)
+  - no_style=False → Upper blocks use style (full CTF with ArtDapter)
 """
 import torch
 import numpy as np
@@ -16,39 +16,20 @@ from ldm.modules.diffusionmodules.util import noise_like
 from .custom_ddim import CustomDDIMSampler
 
 
-def alpha_schedule(
-    step_idx: int,
-    total_steps: int,
-    style_start: float = 0.7,
-) -> float:
-    """
-    Compute step-aware blend weight alpha ∈ [0, 1].
-
-    Args:
-        step_idx:    Current step index (0 = start of denoising, total_steps-1 = end).
-        total_steps: Total number of DDIM steps.
-        style_start: Fraction of steps before style starts blending in (default 0.7).
-
-    Returns:
-        alpha: 0.0 during structure building, rising to 1.0 during style application.
-    """
-    progress = step_idx / max(total_steps - 1, 1)
-    if progress < style_start:
-        return 0.0
-    return (progress - style_start) / (1.0 - style_start)
-
-
-def _inject_alpha(cond, alpha_value: float):
-    """Inject alpha into a conditioning dict. Pass-through for non-dict cond."""
+def _set_no_style(cond, value: bool):
+    """Set the no_style flag in a conditioning dict. Pass-through for non-dict cond."""
     if isinstance(cond, dict):
-        return {**cond, 'alpha': alpha_value}
+        return {**cond, 'no_style': value}
     return cond
 
 
 class CTFDDIMSampler(CustomDDIMSampler):
     """
-    DDIM sampler that injects step-aware alpha into the conditioning dict
-    at each denoising step. Extends CustomDDIMSampler.
+    DDIM sampler for CTF pipeline with Decoupled Context Routing.
+
+    Supports Phase Analysis:
+      - no_style=True  → structure-only sampling (Phase 1)
+      - no_style=False → full CTF sampling with style (Phase 2)
     """
 
     @torch.no_grad()
@@ -77,10 +58,14 @@ class CTFDDIMSampler(CustomDDIMSampler):
                ucg_schedule=None,
                global_strength=None,
                # CTF params
-               style_start=0.7,
+               no_style=False,
                **kwargs):
         """
-        Override sample() to pass style_start down to ddim_sampling.
+        Override sample() to support Phase Analysis via no_style flag.
+
+        Args:
+            no_style: If True, Upper blocks use content instead of style
+                      (structure-only mode for Phase Analysis).
         """
         # Validate conditioning batch size
         if conditioning is not None and isinstance(conditioning, dict):
@@ -114,7 +99,7 @@ class CTFDDIMSampler(CustomDDIMSampler):
             dynamic_threshold=dynamic_threshold,
             ucg_schedule=ucg_schedule,
             global_strength=global_strength,
-            style_start=style_start,
+            no_style=no_style,
         )
         return samples, intermediates
 
@@ -130,9 +115,9 @@ class CTFDDIMSampler(CustomDDIMSampler):
                       unconditional_conditioning=None,
                       dynamic_threshold=None, ucg_schedule=None,
                       global_strength=None,
-                      style_start=0.7):
+                      no_style=False):
         """
-        Custom DDIM sampling loop that injects alpha at each step.
+        DDIM sampling loop with no_style flag injection.
         """
         device = self.model.betas.device
         b = shape[0]
@@ -162,8 +147,8 @@ class CTFDDIMSampler(CustomDDIMSampler):
             else np.flip(timesteps)
         )
         total_steps = timesteps if ddim_use_original_steps else timesteps.shape[0]
-        print(f"Running CTF DDIM Sampling with {total_steps} timesteps, "
-              f"style_start={style_start}")
+        mode_str = "Structure-only (no_style)" if no_style else "Full CTF"
+        print(f"Running CTF DDIM Sampling with {total_steps} timesteps, mode={mode_str}")
 
         iterator = tqdm(time_range, desc='CTF DDIM', total=total_steps)
 
@@ -195,10 +180,7 @@ class CTFDDIMSampler(CustomDDIMSampler):
                 unconditional_conditioning=unconditional_conditioning,
                 dynamic_threshold=dynamic_threshold,
                 global_strength=global_strength,
-                # CTF params
-                step_idx=i,
-                total_steps=total_steps,
-                style_start=style_start,
+                no_style=no_style,
             )
 
             if callback:
@@ -220,25 +202,21 @@ class CTFDDIMSampler(CustomDDIMSampler):
                       unconditional_guidance_scale=1.,
                       unconditional_conditioning=None,
                       dynamic_threshold=None, global_strength=None,
-                      # CTF params
-                      step_idx=0, total_steps=50, style_start=0.7):
+                      no_style=False):
         """
-        Single DDIM denoising step with alpha injection.
-        Alpha is embedded into the cond dict so CTFUNetModel reads it.
+        Single DDIM denoising step with no_style flag injection.
         """
         b, *_, device = *x.shape, x.device
-        alpha = alpha_schedule(step_idx, total_steps, style_start)
 
-        # Inject alpha into conditioning dicts
-        c_alpha = _inject_alpha(c, alpha)
-        # Unconditional always gets alpha=0 (no style routing) for proper CFG
-        uc_alpha = _inject_alpha(unconditional_conditioning, 0.0)
+        # Inject no_style flag into conditioning dicts
+        c_flagged = _set_no_style(c, no_style)
+        uc_flagged = _set_no_style(unconditional_conditioning, no_style)
 
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
-            model_output = self.model.apply_model(x, t, c_alpha, global_strength)
+            model_output = self.model.apply_model(x, t, c_flagged, global_strength)
         else:
-            model_t = self.model.apply_model(x, t, c_alpha, global_strength)
-            model_uncond = self.model.apply_model(x, t, uc_alpha, global_strength)
+            model_t = self.model.apply_model(x, t, c_flagged, global_strength)
+            model_uncond = self.model.apply_model(x, t, uc_flagged, global_strength)
             model_output = model_uncond + unconditional_guidance_scale * (model_t - model_uncond)
 
         # Predict epsilon

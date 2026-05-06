@@ -1,6 +1,5 @@
 """
-CTFUNetModel — Coarse-to-Fine U-Net with layer-aware context routing
-                and Cross-Attention Score Blending.
+CTFUNetModel — Coarse-to-Fine U-Net with Decoupled Context Routing.
 
 Drop-in replacement for UNetModel (SD v1.5).
 - If context is a dict → CTF routing (different blocks get different contexts).
@@ -34,10 +33,10 @@ Experimental findings on block roles:
     → Least effective at absorbing new concepts.
       Using only these loses both character and style information.
 
-Context routing based on experimental findings:
-  Upper  → Style (ArtDapter P3)
+Decoupled context routing (each block receives exactly ONE context type):
+  Upper  → Style   (ArtDapter output of template prompt P3)
   Middle → Content (CLIP P2)
-  Bottom → Layout (CLIP P1)  — least important, just provides spatial structure
+  Bottom → Layout  (CLIP P1)
 """
 import torch
 import torch.nn as th
@@ -61,23 +60,18 @@ STYLE_OUT   = {9, 10, 11}  # Out-Block 3 (Upper) — 64×64, 320ch — STYLE (Ar
 
 class CTFUNetModel(UNetModel):
     """
-    Coarse-to-Fine UNetModel with Cross-Attention Score Blending.
+    Coarse-to-Fine UNetModel with Decoupled Context Routing.
 
-    Routes different context signals to different block groups based on
-    their spatial resolution and experimentally verified role in the U-Net.
-
-    Blending strategy:
-      Instead of interpolating text embeddings (lerp), we pass a list of
-      (context_tensor, weight) tuples to Cross-Attention layers. Each
-      concept gets its own independent Attention(Q, K_i, V_i) computation,
-      and the results are combined via weighted sum. This preserves
-      semantic integrity per the score-based composition theory.
+    Each U-Net block group receives exactly ONE context signal, with no
+    blending or interpolation between different embeddings. This prevents
+    variance mismatch and LayerNorm shock that causes broken/plastic images.
 
     Context dict keys:
-        'layout'  : (B, 77, 768)  — CLIP embedding of Prompt 1 (spatial layout)
-        'content' : (B, 77, 768)  — CLIP embedding of Prompt 2 (object identity)
-        'style'   : (B, 64, 768)  — ArtDapter output of Prompt 3 (artistic style)
-        'alpha'   : float         — denoising progress blend weight (0→1)
+        'layout'   : (B, 77, 768)  — CLIP embedding of Prompt 1 (spatial layout)
+        'content'  : (B, 77, 768)  — CLIP embedding of Prompt 2 (object identity)
+        'style'    : (B, 64, 768)  — ArtDapter output of template Prompt 3 (artistic style)
+        'no_style' : bool          — If True, Upper blocks use content instead of style
+                                     (used for Phase 1 structure-only sampling)
     """
 
     def forward(self, x, timesteps=None, context=None, y=None, **kwargs):
@@ -89,7 +83,11 @@ class CTFUNetModel(UNetModel):
         layout  = context['layout']     # (B, 77, 768) — CLIP P1
         content = context['content']    # (B, 77, 768) — CLIP P2
         style   = context['style']      # (B, 64, 768) — ArtDapter P3
-        alpha   = float(context.get('alpha', 0.0))  # 0.0 → 1.0
+
+        # Phase Analysis: when no_style=True, Upper blocks fall back to content
+        # so the image shows pure structure without any artistic style applied.
+        no_style = bool(context.get('no_style', False))
+        upper_ctx = content if no_style else style
 
         # Standard U-Net time embedding
         hs    = []
@@ -105,9 +103,7 @@ class CTFUNetModel(UNetModel):
         # ── Encoder ──────────────────────────────────────────────
         for i, module in enumerate(self.input_blocks):
             if i in STYLE_IN:            # {1, 2} — Upper — Style
-                # Score-blend: content provides structure, style provides aesthetics
-                # alpha controls temporal transition (0=all content, 1=all style)
-                ctx = [(content, 1.0 - alpha), (style, alpha)]
+                ctx = upper_ctx
             elif i in CONTENT_IN:        # {4, 5} — Middle — Content (identity)
                 ctx = content
             elif i in LAYOUT_IN:         # {7, 8} — Bottom — Layout (spatial)
@@ -129,8 +125,7 @@ class CTFUNetModel(UNetModel):
             elif i in CONTENT_OUT:       # {6, 7, 8} — Middle — Content (identity)
                 ctx = content
             elif i in STYLE_OUT:         # {9, 10, 11} — Upper — Style
-                # Score-blend: content provides object grounding, style provides texture
-                ctx = [(content, 1.0 - alpha), (style, alpha)]
+                ctx = upper_ctx
             else:
                 # Blocks without SpatialTransformer
                 ctx = content

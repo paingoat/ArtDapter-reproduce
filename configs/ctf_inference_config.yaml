@@ -32,7 +32,6 @@ model:
     use_ema: False
 
     # CTF-specific params
-    style_start: 0.7          # fraction of steps before style injection begins
     clip_version: "openai/clip-vit-large-patch14"
 
     artdapter_config:

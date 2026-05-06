@@ -5,12 +5,16 @@ Dual encoding strategy:
   - P1/P2 → CLIP encoder (native CLIP space, compatible with SD v1.5 U-Net)
   - P3 → T5 encoder (cond_stage_model) → ArtDapter (translates T5 → CLIP space)
 
+P3 uses apply_prompt_template() to generate prompts in the EXACT format that
+ArtDapter was trained on: "Prompt: ... Style: ... Balance: ... Harmony: ..."
+This prevents Data Shift (OOD) that occurs when using free-form ChatGPT prompts.
+
 The conditioning dict format:
   {
       'c_layout':  [Tensor(B, 77, 768)]   ← CLIP P1 (layout)
       'c_content': [Tensor(B, 77, 768)]   ← CLIP P2 (content)
       'c_style':   [Tensor(B, T, 2048)]   ← T5 P3 raw (ArtDapter runs inside apply_model)
-      'alpha':     float                  ← step blend weight (injected by CTFDDIMSampler)
+      'no_style':  bool                   ← Phase Analysis flag (structure-only mode)
   }
 """
 import torch
@@ -30,23 +34,21 @@ class ArtDaptedModelCTF(ArtDaptedModel):
 
     - Adds a CLIP encoder for P1 (layout) and P2 (content).
     - Uses existing T5 encoder + ArtDapter for P3 (style).
+    - P3 prompt is generated via apply_prompt_template() (original training format).
     - Overrides apply_model to build a context_dict for CTFUNetModel.
     """
 
     def __init__(self, *args,
                  openai_api_key: str = None,
                  llm_model: str = "gpt-4o-mini",
-                 style_start: float = 0.7,
                  clip_version: str = "openai/clip-vit-large-patch14",
                  **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.style_start = style_start
-
         # CLIP encoder for P1/P2 — small (~250MB), native CLIP space
         self.clip_encoder = CLIPEmbedder(version=clip_version, freeze=True)
 
-        # LLM-based prompt decomposer
+        # LLM-based prompt decomposer (for P1 layout & P2 content only)
         self.decomposer = PromptDecomposer(
             api_key=openai_api_key, model=llm_model
         )
@@ -78,7 +80,7 @@ class ArtDaptedModelCTF(ArtDaptedModel):
         Build context_dict and forward through CTFUNetModel.
 
         Supports two cond formats:
-          1. CTF dict: {'c_layout': [...], 'c_content': [...], 'c_style': [...], 'alpha': float}
+          1. CTF dict: {'c_layout': [...], 'c_content': [...], 'c_style': [...]}
           2. Legacy dict: {'c_crossattn': [...]} → falls back to original ArtDaptedModel behavior
         """
         # Legacy fallback: original ArtDaptedModel behavior
@@ -95,13 +97,13 @@ class ArtDaptedModelCTF(ArtDaptedModel):
         # style features based on the current noise level
         style = self.artdapter(t5_raw, t)             # (B, 64, 768)
 
-        alpha = float(cond.get('alpha', 0.0))
+        no_style = bool(cond.get('no_style', False))
 
         context_dict = {
-            'layout':  layout,
-            'content': content,
-            'style':   style,
-            'alpha':   alpha,
+            'layout':   layout,
+            'content':  content,
+            'style':    style,
+            'no_style': no_style,
         }
 
         # CTFUNetModel reads the dict and routes per block
@@ -121,9 +123,10 @@ class ArtDaptedModelCTF(ArtDaptedModel):
     ) -> dict:
         """
         Full CTF conditioning pipeline:
-        1. Decompose prompts via LLM (1 API call per sample, cached)
-        2. Encode P1/P2 via CLIP, P3 via T5
-        3. Return conditioning dict ready for CTFDDIMSampler
+        1. Decompose prompts via LLM → P1 (layout), P2 (content)
+        2. Build P3 via apply_prompt_template (original training format)
+        3. Encode P1/P2 via CLIP, P3 via T5
+        4. Return conditioning dict ready for CTFDDIMSampler
 
         Note: ArtDapter runs inside apply_model (needs timestep 't').
         """
@@ -134,15 +137,18 @@ class ArtDaptedModelCTF(ArtDaptedModel):
 
         p1_prompts = [d['prompt1'] for d in decomposed]
         p2_prompts = [d['prompt2'] for d in decomposed]
-        p3_prompts = [d['prompt3'] for d in decomposed]
+
+        # P3: use ORIGINAL template format (matches ArtDapter training distribution)
+        # Format: "Prompt: ... Style: ... Balance: ... Harmony: ... Variety: ..."
+        p3_prompts = self.apply_prompt_template(captions, art_styles, PoAs)
 
         # Print decomposition for debugging (visible in Kaggle/terminal output)
         for i, d in enumerate(decomposed):
             print(f"\n{'='*60}")
             print(f"🔍 CTF Decomposition (Sample {i}):")
-            print(f"  [P1] Layout : {d['prompt1']}")
-            print(f"  [P2] Content: {d['prompt2']}")
-            print(f"  [P3] Full   : {d['prompt3']}")
+            print(f"  [P1] Layout  : {d['prompt1']}")
+            print(f"  [P2] Content : {d['prompt2']}")
+            print(f"  [P3] Style   : {p3_prompts[i][:120]}...")
             print(f"{'='*60}")
 
         cond_layout  = self.encode_clip(p1_prompts)              # (B, 77, 768)
@@ -154,7 +160,7 @@ class ArtDaptedModelCTF(ArtDaptedModel):
             c_layout  = [cond_layout],
             c_content = [cond_content],
             c_style   = [cond_style_raw],
-            alpha     = 0.0,    # will be updated by CTFDDIMSampler at each step
+            no_style  = False,
         )
 
     @torch.no_grad()
@@ -170,7 +176,7 @@ class ArtDaptedModelCTF(ArtDaptedModel):
             c_layout  = [empty_clip],
             c_content = [empty_clip],
             c_style   = [empty_t5],
-            alpha     = 0.0,
+            no_style  = False,
         )
 
     # ─────────────────────── VRAM management ────────────────────
