@@ -1,13 +1,15 @@
 """
-Prompt Decomposer — Phân rã prompt thành 3 cấp bậc qua LLM API.
+Prompt Decomposer — Phân rã prompt thành 2 cấp bậc qua LLM API.
 
 Workflow:
-  1 lần gọi API duy nhất → JSON {"prompt1", "prompt2", "prompt3"}
+  1 lần gọi API duy nhất → JSON {"prompt1", "prompt2"}
   - prompt1 (≤30 words): Spatial layout WITH key nouns, NO style
   - prompt2 (≤50 words): Content — full objects/details, NO style
-  - prompt3 (≤100 words): Full — content + style + artistic principles
 
-Word limits đảm bảo P1/P2 nằm trong giới hạn 77 tokens của CLIP.
+prompt3 (Style) is NOT generated here — it uses apply_prompt_template()
+from ArtDaptedModel to match ArtDapter's training distribution exactly.
+
+Word limits ensure P1/P2 stay within CLIP's 77-token limit.
 """
 import os
 import re
@@ -19,8 +21,8 @@ from openai import OpenAI
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-You are an art prompt decomposer. From the given content + style + principles,
-return a JSON object with exactly 3 keys in ONE response:
+You are an art prompt decomposer. Given a content description,
+return a JSON object with exactly 2 keys in ONE response:
 
 "prompt1" (Spatial Layout, ≤ 30 words):
   - KEEP the key subject nouns (e.g. "spaceship", "woman", "smartphone").
@@ -34,13 +36,11 @@ return a JSON object with exactly 3 keys in ONE response:
 "prompt2" (Content, ≤ 50 words):
   - Expand prompt1 with MORE detail about the subjects and scene.
   - Add descriptive adjectives, actions, and secondary objects.
-  - Still NO style words, art movements, textures, or aesthetic references.
+  - Include material words (e.g. metallic, wooden, glowing) — these are NOT style.
+  - Still NO style words, art movements, or aesthetic references.
   - Good: "A glowing high-tech spaceship hovering just above an old stone courtyard, engine exhaust blasting downward."
 
-"prompt3" (Full, ≤ 100 words):
-  - Complete version: prompt2 content + art style + artistic principles, vivid and clean.
-
-Return ONLY: {"prompt1": "...", "prompt2": "...", "prompt3": "..."}
+Return ONLY: {"prompt1": "...", "prompt2": "..."}
 No markdown, no extra keys.\
 """
 
@@ -56,7 +56,14 @@ _STYLE_PATTERN = re.compile(
 
 class PromptDecomposer:
     """
-    Decomposes a full art prompt into 3 hierarchical sub-prompts via LLM API.
+    Decomposes a full art prompt into 2 hierarchical sub-prompts via LLM API.
+
+    Output:
+        prompt1 — Spatial layout (for Bottom/Layout blocks via CLIP)
+        prompt2 — Content details (for Middle/Content blocks via CLIP)
+
+    Note: prompt3 (Style) is generated separately by apply_prompt_template()
+    in ArtDaptedModel to match the exact training format of ArtDapter.
 
     Args:
         api_key:  OpenAI API key (falls back to OPENAI_API_KEY env var).
@@ -79,16 +86,16 @@ class PromptDecomposer:
         max_retries: int = 2,
     ) -> dict:
         """
-        Decompose a single prompt into 3 hierarchical variants.
+        Decompose a single prompt into 2 hierarchical variants.
 
         Returns:
-            {"prompt1": str, "prompt2": str, "prompt3": str}
+            {"prompt1": str, "prompt2": str}
         """
         cache_key = (caption, art_style, tuple(PoA))
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        user_input = self._format_user_input(caption, art_style, PoA)
+        user_input = self._format_user_input(caption)
 
         result = None
         for attempt in range(max_retries + 1):
@@ -107,7 +114,7 @@ class PromptDecomposer:
                     ],
                     response_format={"type": "json_object"},
                     temperature=0.2,
-                    max_tokens=400,
+                    max_tokens=250,
                 )
                 result = json.loads(response.choices[0].message.content)
             except Exception as e:
@@ -130,7 +137,7 @@ class PromptDecomposer:
         if result is None:
             # Fallback: use raw inputs directly
             logger.warning("All LLM attempts failed, using fallback decomposition")
-            result = self._fallback(caption, art_style, PoA)
+            result = self._fallback(caption)
 
         self._last_decomposed = result
         self._cache[cache_key] = result
@@ -151,20 +158,13 @@ class PromptDecomposer:
     # ── Internal ──────────────────────────────────────────────────
 
     @staticmethod
-    def _format_user_input(caption: str, art_style: str, PoA: list) -> str:
-        principles = "; ".join(p for p in PoA if p)
-        return (
-            f"Content: {caption}\n"
-            f"Style: {art_style}\n"
-            f"Principles: {principles}"
-        )
+    def _format_user_input(caption: str) -> str:
+        return f"Content: {caption}"
 
     @staticmethod
-    def _fallback(caption: str, art_style: str, PoA: list) -> dict:
+    def _fallback(caption: str) -> dict:
         """Minimal fallback when LLM is unavailable."""
-        # P1 fallback: use caption directly (has nouns, no style)
         return {
             "prompt1": caption,
             "prompt2": caption,
-            "prompt3": f"{caption}. {art_style}. " + " ".join(p for p in PoA if p),
         }
